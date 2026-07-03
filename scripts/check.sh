@@ -12,8 +12,12 @@ go build ./...
 echo "→ go vet"
 go vet ./...
 
-echo "→ go test -race"
-go test -race ./...
+echo "→ go test -race (+ coverage)"
+go test -race -covermode=atomic -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out | tail -1
+
+echo "→ docs guard (README version-agnostic + EN/JA cross-link)"
+sh scripts/check-docs.sh
 
 if command -v golangci-lint >/dev/null 2>&1; then
   echo "→ golangci-lint"

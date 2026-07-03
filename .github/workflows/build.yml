@@ -36,7 +36,15 @@ jobs:
 
       - run: go build ./...
       - run: go vet ./...
-      - run: go test -race ./... # data-race detector on (F5)
+      - run: go test -race -covermode=atomic -coverprofile=coverage.out ./... # data-race detector on (F5)
+      - name: coverage summary
+        shell: bash
+        run: go tool cover -func=coverage.out | tail -1
+
+      # README hygiene guard: version-agnostic + EN/JA cross-link (F11). Linux only.
+      - if: matrix.os == 'ubuntu-latest'
+        name: docs guard
+        run: sh scripts/check-docs.sh
 
       # v9 installs golangci-lint v2 (our .golangci.yml is v2 format). Lint once,
       # on Linux only — it is OS-independent.
@@ -44,6 +52,12 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: v2.12.2
+
+      # Short fuzz of the pure core each run (Linux only) — a cheap regression net
+      # for the budget algorithm's invariants (identity-when-fits, line-subset).
+      - if: matrix.os == 'ubuntu-latest'
+        name: fuzz budget core (30s)
+        run: go test -run '^$' -fuzz '^FuzzPare$' -fuzztime 30s ./internal/budget/
 
       - name: smoke test
         shell: bash
@@ -71,7 +85,12 @@ jobs:
           cache: true
       # Reachable-vulnerability scan of code + std deps (F4). Latest scanner so
       # the vuln DB is current.
-      - name: govulncheck
+      - name: govulncheck (source + shipped binary)
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+          # Also scan the actual compiled binary — catches stdlib vulns that are
+          # reachable in the shipped artifact (the class of bug that motivated
+          # pare's day-1 supply-chain hardening).
+          go build -o /tmp/pare ./cmd/pare
+          govulncheck -mode binary /tmp/pare
