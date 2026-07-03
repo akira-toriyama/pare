@@ -1,6 +1,9 @@
 module github.com/akira-toriyama/pare
 
-go 1.25.0
+// Floor pinned to a patched 1.25.x: go-version-file drives CI/release to build
+// with exactly this toolchain, so the shipped binary carries current stdlib
+// security fixes (govulncheck -mode binary enforces this in CI — bump on a red).
+go 1.25.11
 
 require github.com/spf13/cobra v1.10.2
 
