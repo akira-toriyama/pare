@@ -1,0 +1,29 @@
+name: govulncheck
+
+# Supply-chain gate via the shared go-vuln reusable: govulncheck of the source
+# (`./...`) and the compiled binary (`-mode binary` — the class that motivated
+# pare's day-1 supply-chain hardening). Runs on push/PR AND a daily cron so a vuln
+# disclosed after merge — no code change — is caught within a day. Previously an
+# in-build.yml job; split out so the cheap daily scan doesn't re-run the suite.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 2 * * *' # daily — catches vulns disclosed after merge
+
+permissions:
+  contents: read
+
+concurrency:
+  group: govulncheck-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    uses: akira-toriyama/.github/.github/workflows/go-vuln.yml@v1
+    with:
+      go-version-file: go.mod
+      gotoolchain: local
+      binary-path: ./cmd/pare
