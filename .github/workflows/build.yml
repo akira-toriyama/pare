@@ -15,10 +15,24 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  # Shared Go CI core (build / vet / race-test / module-hygiene / golangci-lint v2),
+  # SHA-pinned once in the hub. go.mod is floor-only (no `toolchain` line), so
+  # gotoolchain: local installs the floor and stops a mid-run download (F1). coverage
+  # keeps pare's informational func summary.
+  ci:
+    uses: akira-toriyama/.github/.github/workflows/go-ci.yml@v1
+    with:
+      go-version-file: go.mod
+      gotoolchain: local
+      coverage: true
+
+  # Repo-specific checks. Docs guard and fuzz are OS-independent (Linux leg only);
+  # the smoke runs on every leg so the shipped binary (macOS brew cask) is exercised
+  # on darwin too (F8) — matching the pre-migration matrix, which the core test job
+  # (build + unit tests) doesn't cover.
+  extras:
     strategy:
       fail-fast: false
-      # darwin is a first-class shipping target, so exercise it in CI (F8).
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -26,37 +40,21 @@ jobs:
     env:
       GOTOOLCHAIN: local
     steps:
-      # Third-party actions are pinned to a commit SHA (F7); the trailing
-      # comment records the human-readable tag Dependabot bumps.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod # single source of truth; no pinned EOL toolchain (F1)
+          go-version-file: go.mod
           cache: true
 
-      - run: go build ./...
-      - run: go vet ./...
-      - run: go test -race -covermode=atomic -coverprofile=coverage.out ./... # data-race detector on (F5)
-      - name: coverage summary
-        shell: bash
-        run: go tool cover -func=coverage.out | tail -1
-
-      # README hygiene guard: version-agnostic + EN/JA cross-link (F11). Linux only.
-      - if: matrix.os == 'ubuntu-latest'
-        name: docs guard
+      # README hygiene guard: version-agnostic + EN/JA cross-link (F11).
+      - name: docs guard
+        if: runner.os == 'Linux'
         run: sh scripts/check-docs.sh
 
-      # v9 installs golangci-lint v2 (our .golangci.yml is v2 format). Lint once,
-      # on Linux only — it is OS-independent.
-      - if: matrix.os == 'ubuntu-latest'
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
-        with:
-          version: v2.12.2
-
-      # Short fuzz of the pure core each run (Linux only) — a cheap regression net
-      # for the budget algorithm's invariants (identity-when-fits, line-subset).
-      - if: matrix.os == 'ubuntu-latest'
-        name: fuzz budget core (30s)
+      # Short fuzz of the pure core — a cheap regression net for the budget
+      # algorithm's invariants (identity-when-fits, line-subset).
+      - name: fuzz budget core (30s)
+        if: runner.os == 'Linux'
         run: go test -run '^$' -fuzz '^FuzzPare$' -fuzztime 30s ./internal/budget/
 
       - name: smoke test
@@ -69,28 +67,3 @@ jobs:
           # a buried error survives a small budget that a blind tail would drop
           { seq 1 200; echo "ERROR: boom"; seq 201 400; } \
             | /tmp/pare --budget-bytes 300 --head 3 --tail 3 | grep -q 'ERROR: boom'
-
-  govulncheck:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    env:
-      GOTOOLCHAIN: local
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-          cache: true
-      # Reachable-vulnerability scan of code + std deps (F4). Latest scanner so
-      # the vuln DB is current.
-      - name: govulncheck (source + shipped binary)
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
-          # Also scan the actual compiled binary — catches stdlib vulns that are
-          # reachable in the shipped artifact (the class of bug that motivated
-          # pare's day-1 supply-chain hardening).
-          go build -o /tmp/pare ./cmd/pare
-          govulncheck -mode binary /tmp/pare
