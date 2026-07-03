@@ -1,10 +1,15 @@
 #!/bin/sh
 # check.sh — the full local verification, runnable by you or by Claude Code with
-# no TTY. Mirrors what .github/workflows/build.yml enforces in CI, so a green run
-# here means a green CI.
+# no TTY. Mirrors what CI enforces (build.yml → shared go-ci reusable: module
+# hygiene / build / vet / race-test / lint; plus docs guard, smoke, govulncheck),
+# so a green run here means a green CI.
 set -eu
 cd "$(dirname "$0")/.."
 export GOTOOLCHAIN=local
+
+echo "→ module hygiene (go mod tidy -diff + verify)"
+go mod tidy -diff
+go mod verify
 
 echo "→ go build"
 go build ./...
