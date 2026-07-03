@@ -24,3 +24,7 @@ What pare deliberately does **not** do, so the tool stays small and composable.
   once the manual-pipe workflow has proven the defaults.
 - **A `nix` version stamped with the release number** (today the flake reports
   `dev` for source builds by design — see flake.nix).
+- **A man page.** cobra can generate one, but only by pulling a markdown→roff
+  dependency (`go-md2man` and its transitive tree) into a single-command filter
+  — a poor supply-chain trade. `pare --help` (with cobra `Example:` blocks) and
+  the built-in `pare completion <shell>` cover the ergonomics a man page would.
