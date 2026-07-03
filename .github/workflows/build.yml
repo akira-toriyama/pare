@@ -1,0 +1,77 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only needs to read the repo (F6 — never run on the default
+# repo-write token).
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      # darwin is a first-class shipping target, so exercise it in CI (F8).
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      # Third-party actions are pinned to a commit SHA (F7); the trailing
+      # comment records the human-readable tag Dependabot bumps.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod # single source of truth; no pinned EOL toolchain (F1)
+          cache: true
+
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race ./... # data-race detector on (F5)
+
+      # v9 installs golangci-lint v2 (our .golangci.yml is v2 format). Lint once,
+      # on Linux only — it is OS-independent.
+      - if: matrix.os == 'ubuntu-latest'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+
+      - name: smoke test
+        shell: bash
+        run: |
+          go build -o /tmp/pare ./cmd/pare
+          /tmp/pare version
+          # small output passes through untouched
+          printf 'a\nb\nc\n' | /tmp/pare | grep -qx b
+          # a buried error survives a small budget that a blind tail would drop
+          { seq 1 200; echo "ERROR: boom"; seq 201 400; } \
+            | /tmp/pare --budget-bytes 300 --head 3 --tail 3 | grep -q 'ERROR: boom'
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Reachable-vulnerability scan of code + std deps (F4). Latest scanner so
+      # the vuln DB is current.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
