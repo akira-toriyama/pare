@@ -68,6 +68,7 @@ func newRootCmd() *cobra.Command {
 		tail        int
 		context     int
 		match       []string
+		profile     string
 		tee         string
 	)
 
@@ -83,6 +84,8 @@ func newRootCmd() *cobra.Command {
 			"with `2>&1` and use `set -o pipefail` if the upstream exit code matters.",
 		Example: "  # keep a build's errors visible instead of a blind tail\n" +
 			"  npm run build 2>&1 | pare\n\n" +
+			"  # test runs: keep the whole failing assertion block, collapse passes\n" +
+			"  go test -v ./... 2>&1 | pare --profile test\n\n" +
 			"  # tighter budget, capture the full log, add an extra matcher\n" +
 			"  make 2>&1 | pare --budget-bytes 4096 --tee /tmp/build.log --match WARN\n\n" +
 			"  # keep upstream failure visible to the shell\n" +
@@ -97,6 +100,7 @@ func newRootCmd() *cobra.Command {
 				tail:        tail,
 				context:     context,
 				match:       match,
+				profile:     profile,
 				tee:         tee,
 			})
 		},
@@ -107,6 +111,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().IntVar(&tail, "tail", 15, "lines to always keep from the bottom")
 	root.Flags().IntVar(&context, "context", 2, "lines of context to keep around each matched line")
 	root.Flags().StringArrayVar(&match, "match", nil, "error-line regex (repeatable); defaults to a built-in error pattern")
+	root.Flags().StringVar(&profile, "profile", "", "extraction profile: 'test' tunes matching for test-runner failures and keeps the whole indented assertion block; empty = generic")
 	root.Flags().StringVar(&tee, "tee", "", "write the full, untruncated input to this file and reference it in markers")
 
 	root.Version = version.Get().Human()
@@ -122,6 +127,7 @@ type filterConfig struct {
 	tail        int
 	context     int
 	match       []string
+	profile     string
 	tee         string
 }
 
@@ -130,9 +136,23 @@ func runFilter(cmd *cobra.Command, cfg filterConfig) error {
 		return usageErr("--budget-bytes, --head, --tail and --context must be >= 0")
 	}
 
+	// A profile seeds the default matcher and the extent policy. An explicit
+	// --match still wins as the matcher; the profile's extent applies either way.
+	extent := budget.ExtentLine
+	defaultPattern := budget.DefaultPattern
+	switch cfg.profile {
+	case "":
+		// generic (head/tail + error-word matching, single-line extent)
+	case "test":
+		extent = budget.ExtentBlock
+		defaultPattern = budget.TestPattern
+	default:
+		return usageErr("unknown --profile %q (known: test)", cfg.profile)
+	}
+
 	patterns := cfg.match
 	if len(patterns) == 0 {
-		patterns = []string{budget.DefaultPattern}
+		patterns = []string{defaultPattern}
 	}
 	matchers := make([]*regexp.Regexp, 0, len(patterns))
 	for _, p := range patterns {
@@ -160,6 +180,7 @@ func runFilter(cmd *cobra.Command, cfg filterConfig) error {
 		Tail:        cfg.tail,
 		Context:     cfg.context,
 		Matchers:    matchers,
+		Extent:      extent,
 		TeePath:     cfg.tee,
 	})
 

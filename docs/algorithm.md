@@ -8,8 +8,13 @@ deterministic, no I/O — so it is unit-tested directly.
 
 - `BudgetBytes` — the byte ceiling for the output.
 - `Head` / `Tail` — lines always kept from the top / bottom.
-- `Context` — lines kept on each side of a matched line.
+- `Context` — lines kept on each side of a matched region.
 - `Matchers` — regexes that mark a line as "error-ish" (OR-ed together).
+- `Extent` — how a match expands into a must-keep region before `Context` is
+  added. `ExtentLine` (default) keeps just the matched line; `ExtentBlock` keeps
+  the contiguous, strictly-more-indented lines above and below it — the indented
+  assertion body a test runner prints under (or, with `go test -v`, above) a
+  failure header. `ExtentBlock` backs the `test` profile.
 - `TeePath` — when set, named inside omission markers.
 
 ## Policy
@@ -19,9 +24,11 @@ deterministic, no I/O — so it is unit-tested directly.
    results — a `strings.Split`/`Join` round-trip is byte-identical.
 2. **Reserve head and tail.** The first `Head` and last `Tail` lines are the
    base set that is kept before anything else.
-3. **Add error blocks, oldest first.** Each matched line expands by `Context`
-   lines on each side; overlapping/adjacent blocks merge. Blocks are added from
-   the top of the file downward.
+3. **Add error blocks, oldest first.** Each match becomes a core region — a
+   single line (`ExtentLine`) or its whole indented assertion block
+   (`ExtentBlock`) — which then expands by `Context` lines on each side;
+   overlapping/adjacent blocks merge. Blocks are added from the top of the file
+   downward.
 4. **When over budget, shrink in this order:**
    1. **Context** — reduce the context radius from `Context` down to `0`.
    2. **Drop error blocks from the back** — discard the newest (highest-line)
@@ -49,7 +56,15 @@ are shown — which is the entire point of the tool. Head/tail shrinking only
 triggers under a pathologically small budget, where keeping the very first and
 last lines is the most useful fallback.
 
+## Profiles
+
+A profile preselects the matcher and the `Extent`. The only one today is
+`test` (`TestPattern` + `ExtentBlock`), which keeps the whole failing assertion
+block a test runner prints. A profile only ever changes *which lines are
+selected* — the budget policy above is identical. See the README for the anchor
+set it recognizes.
+
 ## Non-goals
 
-Deduplication, summarization, per-tool format profiles, and streaming/follow are
-out of scope for v1 — see [non-goals.md](non-goals.md).
+Deduplication, summarization, structured (JSON) per-tool parsing, and
+streaming/follow are out of scope — see [non-goals.md](non-goals.md).

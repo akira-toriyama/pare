@@ -62,6 +62,10 @@ make 2>&1 | pare --budget-bytes 4096 --tee /tmp/build.log --match WARN
 
 # keep the upstream exit code visible to the shell
 set -o pipefail; go test ./... 2>&1 | pare
+
+# test runs: keep the whole failing assertion block, collapse the passes
+go test -v ./... 2>&1 | pare --profile test
+swift test 2>&1 | pare --profile test
 ```
 
 ### Flags
@@ -73,6 +77,7 @@ set -o pipefail; go test ./... 2>&1 | pare
 | `--tail` | `15` | Lines always kept from the bottom. |
 | `--context` | `2` | Lines of context kept around each matched line. |
 | `--match` | built-in | Error-line regex ([RE2](https://github.com/google/re2/wiki/Syntax)). Repeatable; **replaces** the default when given. |
+| `--profile` | – | Extraction profile. `test` tunes matching for test-runner failures and keeps the whole indented assertion block. Empty = generic. |
 | `--tee FILE` | – | Write the full, untruncated input to `FILE` and name it in omission markers. |
 
 The built-in matcher is, case-insensitively:
@@ -82,6 +87,32 @@ The built-in matcher is, case-insensitively:
 ```
 
 Pass one or more `--match` to override it (e.g. `--match 'WARN|deprecated'`).
+
+### The `test` profile
+
+`--profile test` is for piping a test runner's output. It changes two things:
+
+- **Structural failure anchors** instead of the generic error-word regex — it
+  keys off `--- FAIL:` / `FAIL` / `panic:` (Go), `: error:` and `✘` (Swift
+  XCTest / Swift Testing), `●` `✕` `×` (jest / vitest), `FAILED` / `E ` (pytest),
+  and `file:line:col:` build diagnostics — so ordinary log prose and passing
+  lines don't match.
+- **Whole assertion block** instead of a fixed `--context` radius — when an
+  anchor matches, pare keeps the contiguous indented body around it (the
+  `Error Trace` / `expected` / `actual` / got-want detail a runner prints),
+  whether it sits below the header (`go test`) or above it (`go test -v`). The
+  passing tests still collapse into `[... N lines omitted ...]`.
+
+Everything else is unchanged: pare still only **selects** verbatim lines (it
+never summarizes, counts, or emits JSON), still honors `--budget-bytes` /
+`--tee`, and still never reads the upstream exit code. An explicit `--match`
+still wins as the matcher; the profile's block behavior applies either way.
+
+```sh
+go test -v ./... 2>&1 | pare --profile test
+swift test  2>&1 | pare --profile test
+pnpm test   2>&1 | pare --profile test
+```
 
 ### Two things to know about pipes
 

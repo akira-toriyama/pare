@@ -6,10 +6,17 @@ What pare deliberately does **not** do, so the tool stays small and composable.
 
 - **Deduplication / summarization.** pare selects lines; it never rewrites,
   collapses repeats, or summarizes. Reach for a dedicated tool (e.g. rtk) when
-  you want that.
-- **Per-tool format profiles.** pare treats all input as plain lines with a
-  regex notion of "error". Structured per-tool parsing (Go test, cargo, tsc, …
-  via reviewdog/errorformat) is planned for a future major version, not v1.
+  you want that. This is why `--profile test` (below) only ever *selects* the
+  assertion block — it does not emit a `N passed, M failed` tally or restructure
+  the output.
+- **Structured (JSON) test records.** `--profile test` keeps the failing
+  assertion block as verbatim text; it deliberately does not parse it into
+  machine records (test name / file:line / got-want fields). Go and most JS/TS
+  runners have no structured got/want to parse (it is free-text assertion
+  convention), and pare has no schema/contract to be a machine API. If a
+  concrete consumer ever needs machine-parseable failures, that is a separate
+  tool (the local sibling of `cifail`), not a pare mode — keeping pare a pure
+  line selector.
 - **Streaming / follow.** pare reads stdin to EOF, then writes. It is a filter
   for bounded command output, not a `tail -f` replacement.
 - **Reading the upstream exit code.** pare is a pipe filter and cannot see the

@@ -108,6 +108,88 @@ func TestFilter_CustomMatchReplacesDefault(t *testing.T) {
 	}
 }
 
+func TestFilter_ProfileTestKeepsAssertionBlock(t *testing.T) {
+	// Realistic go-test output: many passing tests around one failure whose
+	// assertion body is indented under the `--- FAIL:` header.
+	var b strings.Builder
+	emit := func(from, to int) {
+		for i := from; i <= to; i++ {
+			fmt.Fprintf(&b, "=== RUN   TestPass%03d\n--- PASS: TestPass%03d (0.00s)\n", i, i)
+		}
+	}
+	emit(1, 60)
+	b.WriteString("--- FAIL: TestBeta (0.00s)\n")
+	b.WriteString("    beta_test.go:42: got 3, want 4\n")
+	b.WriteString("        values differ at index 0\n")
+	emit(61, 120)
+	b.WriteString("FAIL\texample/pkg\t0.123s\n")
+
+	out, err := run([]string{"--profile", "test", "--budget-bytes", "600", "--head", "3", "--tail", "3", "--context", "0"}, b.String())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"beta_test.go:42: got 3, want 4", "values differ at index 0"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("--profile test dropped assertion detail %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "TestPass030") {
+		t.Fatalf("a middle passing test should be omitted:\n%s", out)
+	}
+}
+
+func TestFilter_ProfileTestKeepsSwiftXCTestFailure(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 200; i++ {
+		if i == 100 {
+			b.WriteString("/repo/Tests/FooTests.swift:12: error: -[FooTests testBar] : XCTAssertEqual failed: (\"1\") is not equal to (\"2\")\n")
+		} else {
+			fmt.Fprintf(&b, "Test Case '-[FooTests testPass%03d]' passed (0.001 seconds).\n", i)
+		}
+	}
+	out, err := run([]string{"--profile", "test", "--budget-bytes", "800", "--head", "2", "--tail", "2", "--context", "0"}, b.String())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "XCTAssertEqual failed") {
+		t.Fatalf("--profile test dropped the XCTest failure line:\n%s", out)
+	}
+	if strings.Contains(out, "testPass050") {
+		t.Fatalf("a passing case should be omitted:\n%s", out)
+	}
+}
+
+func TestFilter_UnknownProfileIsUsageError(t *testing.T) {
+	_, err := run([]string{"--profile", "nope"}, "whatever\n")
+	assertExitCode(t, err, codeUsage)
+}
+
+func TestFilter_ProfileTestBlockExtentAppliesToCustomMatch(t *testing.T) {
+	// Documented interaction: with --profile test an explicit --match still wins
+	// as the matcher, but the profile's block extent applies around those matches
+	// — so the indented body under a custom-matched line survives context 0.
+	var b strings.Builder
+	for i := 1; i <= 40; i++ {
+		fmt.Fprintf(&b, "pass line %02d\n", i)
+	}
+	b.WriteString("MYTOKEN header line\n")
+	b.WriteString("    indented body under my token\n")
+	b.WriteString("    second indented body line\n")
+	for i := 41; i <= 80; i++ {
+		fmt.Fprintf(&b, "pass line %02d\n", i)
+	}
+	out, err := run([]string{"--profile", "test", "--match", "MYTOKEN", "--budget-bytes", "400", "--head", "1", "--tail", "1", "--context", "0"}, b.String())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "second indented body line") {
+		t.Fatalf("block extent should apply around a custom --match under --profile test:\n%s", out)
+	}
+	if strings.Contains(out, "pass line 20") {
+		t.Fatalf("a middle pass line should be omitted:\n%s", out)
+	}
+}
+
 func TestVersion_JSON(t *testing.T) {
 	out, err := run([]string{"version", "--json"}, "")
 	if err != nil {
