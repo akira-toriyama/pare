@@ -162,8 +162,15 @@ func tryPlan(lines []string, plan []span, trailingNL bool, opts Options) (out []
 	return out, omitted, len(out) <= opts.BudgetBytes
 }
 
+// truncated builds a Result for a paring that went through the budget machinery.
+// Truncated is gated on whether any line was actually dropped: every plan that
+// tryPlan accepts has omitted > 0 (a zero-omission plan reconstructs the whole
+// input, whose length exceeds the budget, so it fails the fit check), leaving
+// only the floor return — where head+tail already spans the input — able to
+// carry omitted == 0. Reporting Truncated: false there keeps the Result honest:
+// byte-identical, unchanged output never claims a truncation happened.
 func truncated(out []byte, inputLines, n, omitted int) Result {
-	return Result{Output: out, Truncated: true, InputLines: inputLines, KeptLines: n - omitted, OmittedLines: omitted}
+	return Result{Output: out, Truncated: omitted > 0, InputLines: inputLines, KeptLines: n - omitted, OmittedLines: omitted}
 }
 
 // renderPlan emits the kept spans in order, inserting one omission marker for

@@ -193,6 +193,26 @@ func TestPare_FloorShrinkUnderTinyBudget(t *testing.T) {
 	}
 }
 
+func TestPare_FloorPassthroughIsNotReportedTruncated(t *testing.T) {
+	// A few but very long lines: head+tail already spans every line, yet the
+	// bytes exceed the budget. The shrink loop bottoms out at the floor and
+	// returns the whole input verbatim — nothing is omitted, so the Result must
+	// NOT claim a truncation (Output byte-identical, OmittedLines 0, Truncated
+	// false). Guards the truncated() flag against the self-contradictory state
+	// where unchanged output was reported as truncated.
+	in := []byte(strings.Repeat(strings.Repeat("x", 100)+"\n", 4)) // 4 lines × 101 bytes
+	res := Pare(in, Options{BudgetBytes: 50, Head: 15, Tail: 15, Matchers: defaultMatchers(t)})
+	if res.Truncated {
+		t.Fatalf("unchanged floor passthrough must not be reported as truncated: %+v", res)
+	}
+	if string(res.Output) != string(in) {
+		t.Fatalf("floor passthrough must return the input verbatim:\n got %q\nwant %q", res.Output, in)
+	}
+	if res.OmittedLines != 0 || res.KeptLines != res.InputLines {
+		t.Fatalf("no line was dropped, counts should reflect that: %+v", res)
+	}
+}
+
 func TestPare_HeadTailLargerThanInput(t *testing.T) {
 	in := []byte("one\ntwo\nthree\n")
 	res := Pare(in, Options{BudgetBytes: 1 << 20, Head: 100, Tail: 100})
