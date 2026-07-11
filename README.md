@@ -72,7 +72,7 @@ swift test 2>&1 | pare --profile test
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--budget-bytes` | `8192` | Byte ceiling for the output. |
+| `--budget-bytes` | `8192` | Byte ceiling for the output (`0` disables the budget — full passthrough). |
 | `--head` | `15` | Lines always kept from the top. |
 | `--tail` | `15` | Lines always kept from the bottom. |
 | `--context` | `2` | Lines of context kept around each matched line. |
@@ -93,10 +93,10 @@ Pass one or more `--match` to override it (e.g. `--match 'WARN|deprecated'`).
 `--profile test` is for piping a test runner's output. It changes two things:
 
 - **Structural failure anchors** instead of the generic error-word regex — it
-  keys off `--- FAIL:` / `FAIL` / `panic:` (Go), `: error:` and `✘` (Swift
-  XCTest / Swift Testing), `●` `✕` `×` (jest / vitest), `FAILED` / `E ` (pytest),
-  and `file:line:col:` build diagnostics — so ordinary log prose and passing
-  lines don't match.
+  keys off `--- FAIL:` / `FAIL` / `panic:` (Go), `: error:` (Swift XCTest /
+  clang), the fail marks `✘` `✗` `●` `✕` `×` (Swift Testing / jest / vitest),
+  `FAILED` / `E ` (pytest), and `file:line:col:` build diagnostics — so ordinary
+  log prose and passing lines don't match.
 - **Whole assertion block** instead of a fixed `--context` radius — when an
   anchor matches, pare keeps the contiguous indented body around it (the
   `Error Trace` / `expected` / `actual` / got-want detail a runner prints),
