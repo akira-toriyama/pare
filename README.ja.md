@@ -71,7 +71,7 @@ swift test 2>&1 | pare --profile test
 
 | フラグ | 既定 | 意味 |
 |---|---|---|
-| `--budget-bytes` | `8192` | 出力のバイト上限。 |
+| `--budget-bytes` | `8192` | 出力のバイト上限（`0` で予算を無効化＝全文素通し）。 |
 | `--head` | `15` | 先頭から必ず残す行数。 |
 | `--tail` | `15` | 末尾から必ず残す行数。 |
 | `--context` | `2` | マッチ行の前後に残す文脈行数。 |
@@ -92,9 +92,9 @@ swift test 2>&1 | pare --profile test
 `--profile test` はテストランナーの出力を流すためのもの。2 点が変わる:
 
 - **汎用のエラー語 regex ではなく構造的な失敗アンカー** で拾う——`--- FAIL:` /
-  `FAIL` / `panic:`（Go）、`: error:` と `✘`（Swift の XCTest / Swift Testing）、
-  `●` `✕` `×`（jest / vitest）、`FAILED` / `E `（pytest）、`file:line:col:` の
-  ビルド診断。だから通常のログ本文や成功行にはマッチしない。
+  `FAIL` / `panic:`（Go）、`: error:`（Swift の XCTest / clang）、失敗マーク
+  `✘` `✗` `●` `✕` `×`（Swift Testing / jest / vitest）、`FAILED` / `E `（pytest）、
+  `file:line:col:` のビルド診断。だから通常のログ本文や成功行にはマッチしない。
 - **固定の `--context` 幅ではなくアサーションのブロック全体** を残す——アンカーに
   マッチしたら、その周囲の連続したインデント本体（`Error Trace` / `expected` /
   `actual` などの got/want 詳細）を、ヘッダの下（`go test`）でも上（`go test -v`）でも

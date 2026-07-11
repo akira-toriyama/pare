@@ -92,7 +92,7 @@ func newRootCmd() *cobra.Command {
 
 	// Bind flags straight to the config cobra hands runFilter, so filterConfig is
 	// the single source of truth for these fields (no parallel var block + copy).
-	root.Flags().IntVar(&cfg.budgetBytes, "budget-bytes", 8192, "byte ceiling for the output")
+	root.Flags().IntVar(&cfg.budgetBytes, "budget-bytes", 8192, "byte ceiling for the output (0 disables the budget)")
 	root.Flags().IntVar(&cfg.head, "head", 15, "lines to always keep from the top")
 	root.Flags().IntVar(&cfg.tail, "tail", 15, "lines to always keep from the bottom")
 	root.Flags().IntVar(&cfg.context, "context", 2, "lines of context to keep around each matched line")
