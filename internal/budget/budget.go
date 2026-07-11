@@ -20,6 +20,39 @@ import (
 // without swallowing ordinary prose. RE2 (Go regexp) supports \b and (?i).
 const DefaultPattern = `(?i)\b(error|fail(ed|ure)?|exception|fatal|panic|abort|denied|traceback|undefined symbol|cannot find|assert)\b`
 
+// TestPattern matches the structural failure anchors of common test runners. It
+// backs the `test` profile (paired with ExtentBlock). Unlike DefaultPattern it
+// keys off line STRUCTURE — a FAIL header, a failure mark, a file:line:col
+// diagnostic — rather than the word "error" in prose, so passing lines and
+// ordinary logs do not match. Matched against individual lines (^ is line
+// start). Covers, in order: Go `--- FAIL:` (incl. indented subtests), Go
+// package `FAIL` summary and bare `FAIL`, panics, Swift-Testing/jest/vitest fail
+// marks (✘✗●✕×), XCTest and clang/gcc `: error:` lines, pytest `FAILED` summary
+// and `E ` detail, and file:line:col build diagnostics (Go and others).
+const TestPattern = `^\s*--- FAIL:` + // Go (sub)test failure header
+	`|^FAIL\b` + //             Go package summary + bare FAIL
+	`|^panic:` + //             Go / runtime panic
+	`|^\s*[✘✗●✕×]` + //         Swift Testing / jest / vitest fail marks
+	`|: error:` + //            XCTest, clang/gcc: "file:line: error:"
+	`|^FAILED\b` + //           pytest short-summary line
+	`|^E {2,}` + //             pytest error-detail lines ("E   assert ...")
+	`|\.\w+:\d+:\d+:` //        Go build / file:line:col diagnostics
+
+// Extent selects how a matched line expands into a must-keep region before the
+// budget machinery adds Context around it.
+type Extent int
+
+const (
+	// ExtentLine keeps just the matched line (pare's default behavior).
+	ExtentLine Extent = iota
+	// ExtentBlock also keeps the contiguous, strictly-more-indented (non-blank)
+	// lines immediately above and below the match — the assertion body a test
+	// runner prints under (or, with `go test -v`, above) a failure header — as
+	// one unit. It backs the `test` profile. It still only ever selects verbatim
+	// input lines, so pare's byte-identical-subset contract holds.
+	ExtentBlock
+)
+
 // floorLines is the minimum head/tail auto-shrink will leave. Below a
 // pathologically small budget pare keeps at least this many head and tail
 // lines (unless the caller asked for fewer) rather than collapsing to nothing.
@@ -33,6 +66,7 @@ type Options struct {
 	Tail        int              // lines kept from the bottom
 	Context     int              // lines of context kept around each matched line
 	Matchers    []*regexp.Regexp // error-line matchers (OR-ed); nil ⇒ head/tail only
+	Extent      Extent           // how a match expands into a must-keep region
 	TeePath     string           // when set, referenced inside omission markers
 }
 
@@ -66,22 +100,23 @@ func Pare(input []byte, opts Options) Result {
 	lines, trailingNL := splitLines(input)
 	n := len(lines)
 
-	var errIdx []int
+	var matchIdx []int
 	for i, ln := range lines {
 		for _, re := range opts.Matchers {
 			if re != nil && re.MatchString(ln) {
-				errIdx = append(errIdx, i)
+				matchIdx = append(matchIdx, i)
 				break
 			}
 		}
 	}
+	cores := coreSpans(lines, matchIdx, opts.Extent)
 
 	h0 := clamp(opts.Head, 0, n)
 	t0 := clamp(opts.Tail, 0, n)
 	floorH := min(h0, floorLines)
 	floorT := min(t0, floorLines)
 	maxCtx := max(opts.Context, 0)
-	if len(errIdx) == 0 {
+	if len(cores) == 0 {
 		maxCtx = 0 // nothing to contextualize; skip the redundant sweep
 	}
 
@@ -91,14 +126,14 @@ func Pare(input []byte, opts Options) Result {
 
 		// Phase A: keep every error block, shrinking context from max to 0.
 		for c := maxCtx; c >= 0; c-- {
-			if out, omitted, ok := tryPlan(lines, combine(base, errorBlocks(errIdx, c, n)), trailingNL, opts); ok {
+			if out, omitted, ok := tryPlan(lines, combine(base, expandBlocks(cores, c, n)), trailingNL, opts); ok {
 				return truncated(out, inputLines, n, omitted)
 			}
 		}
 
 		// Phase B: context 0, discard error blocks from the back (newest first).
 		// k == 0 tests head/tail alone.
-		blocks0 := errorBlocks(errIdx, 0, n)
+		blocks0 := expandBlocks(cores, 0, n)
 		for k := len(blocks0); k >= 0; k-- {
 			if out, omitted, ok := tryPlan(lines, combine(base, blocks0[:k]), trailingNL, opts); ok {
 				return truncated(out, inputLines, n, omitted)
@@ -196,15 +231,73 @@ func baseSpans(h, t, n int) []span {
 	return mergeSpans(spans)
 }
 
-// errorBlocks expands each matched index by context lines and merges overlaps.
-// The result is sorted by start, so keeping a prefix drops the latest blocks.
-func errorBlocks(errIdx []int, context, n int) []span {
-	if len(errIdx) == 0 {
+// coreSpans turns matched line indices into the minimal must-keep span for each
+// match, before context is added. ExtentLine yields the single matched line;
+// ExtentBlock yields the whole indented assertion block the match heads.
+func coreSpans(lines []string, idx []int, ext Extent) []span {
+	if len(idx) == 0 {
 		return nil
 	}
-	spans := make([]span, 0, len(errIdx))
-	for _, i := range errIdx {
-		spans = append(spans, span{max(i-context, 0), min(i+context+1, n)})
+	out := make([]span, 0, len(idx))
+	for _, i := range idx {
+		if ext == ExtentBlock {
+			out = append(out, blockExtent(lines, i))
+		} else {
+			out = append(out, span{i, i + 1})
+		}
+	}
+	return out
+}
+
+// blockExtent expands a matched anchor line into the assertion block it heads:
+// the anchor plus the contiguous run of strictly-more-indented, non-blank lines
+// immediately above and below it. That captures the indented body a runner
+// prints for a failure — the file:line and got/want detail — whether it sits
+// below the FAIL header (go test) or above it (go test -v), without a
+// per-framework parser.
+func blockExtent(lines []string, i int) span {
+	base := indentWidth(lines[i])
+	start, end := i, i+1
+	for j := i - 1; j >= 0; j-- {
+		if isBlank(lines[j]) || indentWidth(lines[j]) <= base {
+			break
+		}
+		start = j
+	}
+	for j := i + 1; j < len(lines); j++ {
+		if isBlank(lines[j]) || indentWidth(lines[j]) <= base {
+			break
+		}
+		end = j + 1
+	}
+	return span{start, end}
+}
+
+// indentWidth counts leading spaces and tabs (each as one unit — enough for the
+// relative comparison blockExtent needs).
+func indentWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if r != ' ' && r != '\t' {
+			break
+		}
+		w++
+	}
+	return w
+}
+
+func isBlank(s string) bool { return strings.TrimSpace(s) == "" }
+
+// expandBlocks pads each core span by context lines on both sides and merges
+// overlaps. The result is sorted by start, so keeping a prefix drops the latest
+// blocks.
+func expandBlocks(cores []span, context, n int) []span {
+	if len(cores) == 0 {
+		return nil
+	}
+	spans := make([]span, 0, len(cores))
+	for _, c := range cores {
+		spans = append(spans, span{max(c.start-context, 0), min(c.end+context, n)})
 	}
 	return mergeSpans(spans)
 }

@@ -61,6 +61,10 @@ make 2>&1 | pare --budget-bytes 4096 --tee /tmp/build.log --match WARN
 
 # 上流の exit code をシェルに見せる
 set -o pipefail; go test ./... 2>&1 | pare
+
+# テスト実行: 失敗したアサーションのブロックを丸ごと残し、成功は畳む
+go test -v ./... 2>&1 | pare --profile test
+swift test 2>&1 | pare --profile test
 ```
 
 ### フラグ
@@ -72,6 +76,7 @@ set -o pipefail; go test ./... 2>&1 | pare
 | `--tail` | `15` | 末尾から必ず残す行数。 |
 | `--context` | `2` | マッチ行の前後に残す文脈行数。 |
 | `--match` | 組み込み | エラー行の正規表現（[RE2](https://github.com/google/re2/wiki/Syntax)）。繰り返し可・指定時は既定を **置換**。 |
+| `--profile` | – | 抽出プロファイル。`test` はテストランナーの失敗に合わせ、インデントされたアサーションのブロックを丸ごと残す。空 = 汎用。 |
 | `--tee FILE` | – | フル（未切り詰め）入力を `FILE` に書き、省略マーカーに参照を記す。 |
 
 組み込みマッチャ（大文字小文字を無視）:
@@ -81,6 +86,29 @@ set -o pipefail; go test ./... 2>&1 | pare
 ```
 
 `--match` を 1 つ以上渡すと既定を上書きする（例: `--match 'WARN|deprecated'`）。
+
+### `test` プロファイル
+
+`--profile test` はテストランナーの出力を流すためのもの。2 点が変わる:
+
+- **汎用のエラー語 regex ではなく構造的な失敗アンカー** で拾う——`--- FAIL:` /
+  `FAIL` / `panic:`（Go）、`: error:` と `✘`（Swift の XCTest / Swift Testing）、
+  `●` `✕` `×`（jest / vitest）、`FAILED` / `E `（pytest）、`file:line:col:` の
+  ビルド診断。だから通常のログ本文や成功行にはマッチしない。
+- **固定の `--context` 幅ではなくアサーションのブロック全体** を残す——アンカーに
+  マッチしたら、その周囲の連続したインデント本体（`Error Trace` / `expected` /
+  `actual` などの got/want 詳細）を、ヘッダの下（`go test`）でも上（`go test -v`）でも
+  丸ごと保持する。成功したテストは `[... N lines omitted ...]` に畳まれる。
+
+それ以外は不変: pare は今も **行を選ぶだけ**（要約・集計・JSON 出力はしない）で、
+`--budget-bytes` / `--tee` も従来どおり、上流の exit code も読まない。明示的な
+`--match` はマッチャとして優先され、プロファイルのブロック挙動はどちらでも効く。
+
+```sh
+go test -v ./... 2>&1 | pare --profile test
+swift test  2>&1 | pare --profile test
+pnpm test   2>&1 | pare --profile test
+```
 
 ### パイプで知っておくべき 2 点
 
