@@ -10,11 +10,16 @@ builds:
     binary: pare
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
+    # Reproducible per tag: pin the stamped date to the commit's date (not the
+    # wall-clock build time) and the binary's mod time to the commit timestamp,
+    # so rebuilding the same tag yields byte-identical artifacts. Pairs with the
+    # -trimpath above, which strips the build's local filesystem paths.
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w
       - -X github.com/akira-toriyama/pare/internal/version.Version={{ .Version }}
       - -X github.com/akira-toriyama/pare/internal/version.Commit={{ .FullCommit }}
-      - -X github.com/akira-toriyama/pare/internal/version.Date={{ .Date }}
+      - -X github.com/akira-toriyama/pare/internal/version.Date={{ .CommitDate }}
     goos: [linux, darwin]
     goarch: [amd64, arm64]
 
