@@ -20,11 +20,14 @@ func newVersionCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			info := version.Get()
 			if asJSON {
-				b, err := json.Marshal(info)
-				if err != nil {
+				// The single JSON funnel: HTML escaping off so any <, >, & pass
+				// through verbatim, matching the on-disk encoding. Encode adds a
+				// trailing newline.
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetEscapeHTML(false)
+				if err := enc.Encode(info); err != nil {
 					return internalErr("marshalling version: %v", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(b))
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "pare %s\n", info.Human())
