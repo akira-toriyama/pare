@@ -270,3 +270,66 @@ func TestPare_DefaultPatternMatchesCommonDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeSpans_PartialOverlapExtends(t *testing.T) {
+	// Two partially-overlapping spans must merge into their union so no spurious
+	// gap (and no stray omission marker) ever splits a kept region. Pins the
+	// extension branch: sp.start <= last.end && sp.end > last.end.
+	got := mergeSpans([]span{{0, 5}, {4, 9}})
+	if len(got) != 1 || got[0] != (span{0, 9}) {
+		t.Fatalf("partial-overlap spans must merge to their union {0 9}: got %v", got)
+	}
+	// Adjacent (touching) spans also merge — no zero-line gap between them.
+	if got := mergeSpans([]span{{0, 3}, {3, 6}}); len(got) != 1 || got[0] != (span{0, 6}) {
+		t.Fatalf("adjacent spans must merge to {0 6}: got %v", got)
+	}
+	// Disjoint spans stay separate (the branch's else path).
+	if got := mergeSpans([]span{{0, 2}, {5, 7}}); len(got) != 2 {
+		t.Fatalf("disjoint spans must stay separate: got %v", got)
+	}
+}
+
+func TestPare_TrailingGapClosedByMarker(t *testing.T) {
+	// Head>0, Tail=0: everything after the head is a single trailing gap, which
+	// renderPlan must close with an omission marker (the last input line is gone).
+	// Exercises renderPlan's prev < n trailing-gap branch.
+	in := []byte(numbered(200))
+	res := Pare(in, Options{BudgetBytes: 120, Head: 3, Tail: 0, Matchers: defaultMatchers(t)})
+	if !res.Truncated {
+		t.Fatalf("expected truncation")
+	}
+	if strings.Contains(string(res.Output), "line200") {
+		t.Fatalf("tail=0 must drop the final line:\n%s", res.Output)
+	}
+	outLines := strings.Split(strings.TrimRight(string(res.Output), "\n"), "\n")
+	last := outLines[len(outLines)-1]
+	if !strings.HasPrefix(last, "[...") || !strings.HasSuffix(last, "...]") {
+		t.Fatalf("last line should be a trailing omission marker, got %q", last)
+	}
+}
+
+func TestPare_OrsAcrossMultipleMatchers(t *testing.T) {
+	// Matchers are OR-ed: a line matched only by the SECOND matcher must still be
+	// kept. Guards against a refactor that consults just the first matcher.
+	var b strings.Builder
+	for i := 1; i <= 80; i++ {
+		switch i {
+		case 20:
+			b.WriteString("ALPHA sentinel one\n")
+		case 60:
+			b.WriteString("OMEGA sentinel two\n")
+		default:
+			fmt.Fprintf(&b, "filler %03d\n", i)
+		}
+	}
+	res := Pare([]byte(b.String()), Options{
+		BudgetBytes: 300, Head: 2, Tail: 2, Context: 0,
+		Matchers: []*regexp.Regexp{regexp.MustCompile("ALPHA"), regexp.MustCompile("OMEGA")},
+	})
+	out := string(res.Output)
+	for _, want := range []string{"ALPHA sentinel one", "OMEGA sentinel two"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("line matched by an OR-ed matcher was dropped: %q\n%s", want, out)
+		}
+	}
+}
