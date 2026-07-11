@@ -11,6 +11,7 @@ package budget
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -127,7 +128,7 @@ func Pare(input []byte, opts Options) Result {
 		// Phase A: keep every error block, shrinking context from max to 0.
 		for c := maxCtx; c >= 0; c-- {
 			if out, omitted, ok := tryPlan(lines, combine(base, expandBlocks(cores, c, n)), trailingNL, opts); ok {
-				return truncated(out, inputLines, n, omitted)
+				return truncated(out, n, omitted)
 			}
 		}
 
@@ -136,7 +137,7 @@ func Pare(input []byte, opts Options) Result {
 		blocks0 := expandBlocks(cores, 0, n)
 		for k := len(blocks0); k >= 0; k-- {
 			if out, omitted, ok := tryPlan(lines, combine(base, blocks0[:k]), trailingNL, opts); ok {
-				return truncated(out, inputLines, n, omitted)
+				return truncated(out, n, omitted)
 			}
 		}
 
@@ -144,7 +145,7 @@ func Pare(input []byte, opts Options) Result {
 		// floor (head/tail only, possibly over budget) once we reach it.
 		if h <= floorH && t <= floorT {
 			out, omitted := renderPlan(lines, base, trailingNL, opts.TeePath)
-			return truncated(out, inputLines, n, omitted)
+			return truncated(out, n, omitted)
 		}
 		if h-floorH >= t-floorT && h > floorH {
 			h--
@@ -163,14 +164,16 @@ func tryPlan(lines []string, plan []span, trailingNL bool, opts Options) (out []
 }
 
 // truncated builds a Result for a paring that went through the budget machinery.
-// Truncated is gated on whether any line was actually dropped: every plan that
-// tryPlan accepts has omitted > 0 (a zero-omission plan reconstructs the whole
-// input, whose length exceeds the budget, so it fails the fit check), leaving
-// only the floor return — where head+tail already spans the input — able to
-// carry omitted == 0. Reporting Truncated: false there keeps the Result honest:
-// byte-identical, unchanged output never claims a truncation happened.
-func truncated(out []byte, inputLines, n, omitted int) Result {
-	return Result{Output: out, Truncated: omitted > 0, InputLines: inputLines, KeptLines: n - omitted, OmittedLines: omitted}
+// n is the input's real line count (in this path it equals countLines(input),
+// so it serves as both InputLines and the base for KeptLines). Truncated is gated
+// on whether any line was actually dropped: every plan that tryPlan accepts has
+// omitted > 0 (a zero-omission plan reconstructs the whole input, whose length
+// exceeds the budget, so it fails the fit check), leaving only the floor return —
+// where head+tail already spans the input — able to carry omitted == 0. Reporting
+// Truncated: false there keeps the Result honest: byte-identical, unchanged output
+// never claims a truncation happened.
+func truncated(out []byte, n, omitted int) Result {
+	return Result{Output: out, Truncated: omitted > 0, InputLines: n, KeptLines: n - omitted, OmittedLines: omitted}
 }
 
 // renderPlan emits the kept spans in order, inserting one omission marker for
@@ -311,11 +314,7 @@ func expandBlocks(cores []span, context, n int) []span {
 
 // combine concatenates span groups and merges them into a normalized set.
 func combine(groups ...[]span) []span {
-	var all []span
-	for _, g := range groups {
-		all = append(all, g...)
-	}
-	return mergeSpans(all)
+	return mergeSpans(slices.Concat(groups...))
 }
 
 // mergeSpans returns a sorted, overlap- and adjacency-merged copy of spans, so
@@ -324,7 +323,7 @@ func mergeSpans(spans []span) []span {
 	if len(spans) == 0 {
 		return nil
 	}
-	s := append([]span(nil), spans...)
+	s := slices.Clone(spans)
 	sort.Slice(s, func(i, j int) bool { return s[i].start < s[j].start })
 	out := []span{s[0]}
 	for _, sp := range s[1:] {
