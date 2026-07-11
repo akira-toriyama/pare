@@ -43,6 +43,8 @@ From inside this checkout: `furrow next` / `furrow ls`. PRs may carry a
 
 ## Fleet-managed files (do not hand-edit here)
 
-`.github/workflows/{task-status,commit-lint,taplo}.yml`, `.github/dependabot.yml`,
-and `docs/commit-convention.md` are distributed by the org `.github` repo's
-fleet-sync and overwritten on its next run — edit the canonical copies there.
+`.github/workflows/{task-status,commit-lint,taplo,zizmor}.yml`,
+`.github/{dependabot,zizmor}.yml`, and `docs/commit-convention.md` are distributed
+by the org `.github` repo's fleet-sync and overwritten on its next run — edit the
+canonical copies there. (`build.yml`, `release.yml`, and `govulncheck.yml` carry
+no fleet header and are the genuinely repo-local, editable workflows.)
