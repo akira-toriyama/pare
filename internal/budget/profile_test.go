@@ -141,6 +141,24 @@ func TestPare_BlockExtentKeepsIndentedBodyAboveAnchor(t *testing.T) {
 	}
 }
 
+func TestBlockExtent_MixedTabAndSpaceIndent(t *testing.T) {
+	// indentWidth counts each leading space or tab as one unit, so "more
+	// indented" is by unit count regardless of tab-vs-space. Pin that heuristic:
+	// a 2-unit anchor absorbs a 4-space body line above and a 3-tab body line
+	// below, stops upward at a 1-tab line (fewer units) and downward at a blank.
+	lines := []string{
+		"\tx: 1 unit — stops the upward scan", // idx0: indent 1 <= 2 → excluded
+		"    y: 4 units above the anchor",     // idx1: indent 4 > 2 → included
+		"  FAIL: anchor with 2 units",         // idx2: the anchor
+		"\t\t\tz: 3 tab units below",          // idx3: indent 3 > 2 → included
+		"",                                    // idx4: blank → stops downward
+		"  w: back at 2 units",                // idx5: not reached
+	}
+	if got := blockExtent(lines, 2); got != (span{1, 4}) {
+		t.Fatalf("blockExtent(anchor idx 2) = %v, want {1 4}", got)
+	}
+}
+
 func TestPare_BlockExtentIsVerbatimSubset(t *testing.T) {
 	in := []byte(goTest(50))
 	res := Pare(in, Options{

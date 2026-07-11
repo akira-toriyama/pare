@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,94 @@ func TestFilter_InvalidRegexIsUsageError(t *testing.T) {
 func TestFilter_NegativeBudgetIsUsageError(t *testing.T) {
 	_, err := run([]string{"--budget-bytes", "-1"}, "whatever\n")
 	assertExitCode(t, err, codeUsage)
+}
+
+func TestFilter_TeeWriteFailureIsInternalError(t *testing.T) {
+	// A --tee path whose parent directory does not exist makes os.WriteFile fail
+	// deterministically, exercising internalErr and the exit-3 (internal/IO) half
+	// of the exit-code contract — the only half no other test covers. stdout must
+	// stay empty so a downstream pipe never receives a partial result.
+	unwritable := filepath.Join(t.TempDir(), "nope", "full.log")
+	out, err := run([]string{"--tee", unwritable}, "a\nb\nc\n")
+	assertExitCode(t, err, codeInternal)
+	if out != "" {
+		t.Fatalf("stdout must be empty when --tee fails, got %q", out)
+	}
+}
+
+// runExecute drives the real package entry point, cli.Execute(), with the process
+// streams swapped, returning the exit code and captured stdout/stderr. Unlike the
+// buffer-based run() helper (which calls newRootCmd directly), this exercises
+// Execute()'s error -> exit-code mapping and its os.Stderr diagnostic routing.
+func runExecute(t *testing.T, args []string, stdin string) (code int, stdout, stderr string) {
+	t.Helper()
+	origArgs, origIn, origOut, origErr := os.Args, os.Stdin, os.Stdout, os.Stderr
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		os.Args, os.Stdin, os.Stdout, os.Stderr = origArgs, origIn, origOut, origErr
+		inR.Close()
+		outR.Close()
+		errR.Close()
+	})
+	go func() {
+		_, _ = io.WriteString(inW, stdin)
+		inW.Close()
+	}()
+
+	os.Args = append([]string{"pare"}, args...)
+	os.Stdin, os.Stdout, os.Stderr = inR, outW, errW
+	code = Execute()
+	outW.Close()
+	errW.Close()
+	ob, _ := io.ReadAll(outR)
+	eb, _ := io.ReadAll(errR)
+	return code, string(ob), string(eb)
+}
+
+func TestExecute_ContractAndExitMapping(t *testing.T) {
+	t.Run("valid subcommand exits ok on stdout", func(t *testing.T) {
+		code, out, _ := runExecute(t, []string{"version"}, "")
+		if code != codeOK {
+			t.Fatalf("exit = %d, want %d", code, codeOK)
+		}
+		if !strings.HasPrefix(out, "pare ") {
+			t.Fatalf("version output should go to stdout: %q", out)
+		}
+	})
+	t.Run("validation error -> exit 2, diagnostic on stderr, stdout pure", func(t *testing.T) {
+		// Invalid regex is an *exitError(codeUsage): covers the errors.As branch.
+		code, out, errb := runExecute(t, []string{"--match", "("}, "data\n")
+		if code != codeUsage {
+			t.Fatalf("exit = %d, want %d", code, codeUsage)
+		}
+		if out != "" {
+			t.Fatalf("stdout must stay pure on error, got %q", out)
+		}
+		if !strings.Contains(errb, "pare:") {
+			t.Fatalf("diagnostic must go to stderr, got %q", errb)
+		}
+	})
+	t.Run("unknown flag -> bare cobra error maps to usage", func(t *testing.T) {
+		// A plain cobra flag error is not an *exitError: covers the codeUsage fallback.
+		code, _, errb := runExecute(t, []string{"--nope"}, "")
+		if code != codeUsage {
+			t.Fatalf("exit = %d, want %d", code, codeUsage)
+		}
+		if !strings.Contains(errb, "pare:") {
+			t.Fatalf("diagnostic must go to stderr, got %q", errb)
+		}
+	})
 }
 
 func TestFilter_CustomMatchReplacesDefault(t *testing.T) {
