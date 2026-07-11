@@ -62,15 +62,7 @@ func Execute() int {
 }
 
 func newRootCmd() *cobra.Command {
-	var (
-		budgetBytes int
-		head        int
-		tail        int
-		context     int
-		match       []string
-		profile     string
-		tee         string
-	)
+	var cfg filterConfig
 
 	root := &cobra.Command{
 		Use:   "pare",
@@ -94,25 +86,19 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFilter(cmd, filterConfig{
-				budgetBytes: budgetBytes,
-				head:        head,
-				tail:        tail,
-				context:     context,
-				match:       match,
-				profile:     profile,
-				tee:         tee,
-			})
+			return runFilter(cmd, cfg)
 		},
 	}
 
-	root.Flags().IntVar(&budgetBytes, "budget-bytes", 8192, "byte ceiling for the output")
-	root.Flags().IntVar(&head, "head", 15, "lines to always keep from the top")
-	root.Flags().IntVar(&tail, "tail", 15, "lines to always keep from the bottom")
-	root.Flags().IntVar(&context, "context", 2, "lines of context to keep around each matched line")
-	root.Flags().StringArrayVar(&match, "match", nil, "error-line regex (repeatable); defaults to a built-in error pattern")
-	root.Flags().StringVar(&profile, "profile", "", "extraction profile: 'test' tunes matching for test-runner failures and keeps the whole indented assertion block; empty = generic")
-	root.Flags().StringVar(&tee, "tee", "", "write the full, untruncated input to this file and reference it in markers")
+	// Bind flags straight to the config cobra hands runFilter, so filterConfig is
+	// the single source of truth for these fields (no parallel var block + copy).
+	root.Flags().IntVar(&cfg.budgetBytes, "budget-bytes", 8192, "byte ceiling for the output")
+	root.Flags().IntVar(&cfg.head, "head", 15, "lines to always keep from the top")
+	root.Flags().IntVar(&cfg.tail, "tail", 15, "lines to always keep from the bottom")
+	root.Flags().IntVar(&cfg.context, "context", 2, "lines of context to keep around each matched line")
+	root.Flags().StringArrayVar(&cfg.match, "match", nil, "error-line regex (repeatable); defaults to a built-in error pattern")
+	root.Flags().StringVar(&cfg.profile, "profile", "", "extraction profile: 'test' tunes matching for test-runner failures and keeps the whole indented assertion block; empty = generic")
+	root.Flags().StringVar(&cfg.tee, "tee", "", "write the full, untruncated input to this file and reference it in markers")
 
 	root.Version = version.Get().Human()
 	root.SetVersionTemplate("pare {{.Version}}\n")
