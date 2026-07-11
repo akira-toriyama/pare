@@ -42,6 +42,11 @@ echo "→ build binary for live checks"
 go build -o bin/pare ./cmd/pare
 BIN="$(pwd)/bin/pare"
 
+if command -v govulncheck >/dev/null 2>&1; then
+  echo "→ govulncheck -mode binary (shipped artifact)"
+  govulncheck -mode binary "$BIN"
+fi
+
 echo "→ smoke: version / passthrough / buried-error survives a small budget"
 "$BIN" version
 printf 'a\nb\nc\n' | "$BIN" | grep -qx b
