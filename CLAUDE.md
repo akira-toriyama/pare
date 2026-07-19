@@ -19,8 +19,8 @@ for the budget policy.
   smoke). Green here ⇒ green CI.
 - **Exit codes:** `0` ok · `2` usage/validation · `3` internal/IO. Errors go to
   **stderr** only; stdout stays pure data.
-- **Commits:** gitmoji + Conventional Commits
-  ([CONTRIBUTING](https://github.com/akira-toriyama/.github/blob/main/CONTRIBUTING.md)).
+- **Commits:** gitmoji-driven — the leading `:code:` is the type and drives
+  release semver ([CONTRIBUTING](https://github.com/akira-toriyama/.github/blob/main/CONTRIBUTING.md)).
   Enable the hook: `git config core.hooksPath scripts/hooks`.
 - **Docs:** keep README.md and README.ja.md in sync on any user-visible change
   (same facts). Keep both **version-agnostic** — never hardcode a release number
@@ -30,10 +30,12 @@ for the budget policy.
 
 ## Releasing
 
-Tag `vX.Y.Z` and push → `.github/workflows/release.yml` runs git-cliff +
-GoReleaser (binaries, checksums, Homebrew cask, build-provenance attestation).
-The Homebrew cask push needs the `HOMEBREW_TAP_TOKEN` secret; without it the
-release still succeeds and skips only the cask.
+Compute the next tag with `glyph bump --since-tag` (gitmoji-driven verdict over
+the merged PRs' individual commits since the last tag), then tag `vX.Y.Z` and
+push → `.github/workflows/release.yml` renders the notes with `glyph notes` and
+runs GoReleaser (binaries, checksums, Homebrew cask, build-provenance
+attestation). The Homebrew cask push needs the `HOMEBREW_TAP_TOKEN` secret;
+without it the release still succeeds and skips only the cask.
 
 ## Task tracking
 
