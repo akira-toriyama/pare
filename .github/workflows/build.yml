@@ -20,7 +20,7 @@ jobs:
   # gotoolchain: local installs the floor and stops a mid-run download (F1). coverage
   # keeps pare's informational func summary.
   ci:
-    uses: akira-toriyama/.github/.github/workflows/go-ci.yml@v1
+    uses: akira-toriyama/.github/.github/workflows/go-ci.yml@v2
     with:
       go-version-file: go.mod
       gotoolchain: local
