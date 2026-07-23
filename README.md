@@ -1,7 +1,5 @@
 # pare
 
-[日本語](README.ja.md)
-
 **Context-budget-aware output truncation for AI coding agents.** pare reads
 stdin and writes a trimmed version to stdout that fits within a byte budget,
 keeping the first lines (**head**), the last lines (**tail**), and any **error
