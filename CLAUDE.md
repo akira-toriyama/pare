@@ -36,7 +36,7 @@ Compute the next tag with `glyph bump --since-tag` (gitmoji-driven verdict over
 the merged PRs' individual commits since the last tag), then tag `vX.Y.Z` and
 push → `.github/workflows/release.yml` renders the notes with `glyph notes` and
 runs GoReleaser (binaries, checksums, Homebrew cask, build-provenance
-attestation). The Homebrew cask push needs the `HOMEBREW_TAP_TOKEN` secret;
+attestation). The Homebrew cask push needs the `HOMEBREW_TAP_DEPLOY_KEY` secret;
 without it the release still succeeds and skips only the cask.
 
 ## Task tracking
