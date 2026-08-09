@@ -157,7 +157,6 @@ func Pare(input []byte, opts Options) Result {
 	}
 }
 
-// tryPlan renders plan and reports whether it fits the byte budget.
 func tryPlan(lines []string, plan []span, trailingNL bool, opts Options) (out []byte, omitted int, ok bool) {
 	out, omitted = renderPlan(lines, plan, trailingNL, opts.TeePath)
 	return out, omitted, len(out) <= opts.BudgetBytes
@@ -312,7 +311,6 @@ func expandBlocks(cores []span, context, n int) []span {
 	return mergeSpans(spans)
 }
 
-// combine concatenates span groups and merges them into a normalized set.
 func combine(groups ...[]span) []span {
 	return mergeSpans(slices.Concat(groups...))
 }
