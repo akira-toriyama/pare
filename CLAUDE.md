@@ -19,9 +19,12 @@ for the budget policy.
   smoke). Green here ⇒ green CI.
 - **Exit codes:** `0` ok · `2` usage/validation · `3` internal/IO. Errors go to
   **stderr** only; stdout stays pure data.
-- **Commits:** gitmoji-driven — the leading `:code:` is the type and drives
-  release semver ([CONTRIBUTING](https://github.com/akira-toriyama/.github/blob/main/CONTRIBUTING.md)).
-  Enable the hook: `git config core.hooksPath scripts/hooks`.
+- **Commits:** gitmoji-driven — `<:code:>[(<scope>)]<sigil> <subject>`; the
+  sigil drives release semver and this repo's `glyph.toml` is the grammar
+  ([CONTRIBUTING](https://github.com/akira-toriyama/.github/blob/main/CONTRIBUTING.md)).
+  Before pushing: `glyph lint --range origin/main..HEAD`. The commit-msg hook
+  (`git config core.hooksPath scripts/hooks`) holds no copy of the grammar — it
+  runs `glyph lint --stdin` and skips with a note when `glyph` is not on PATH.
 - **Docs:** English-only and code-first — follow the fleet
   [doc-consistency policy](https://github.com/akira-toriyama/.github/blob/main/docs/doc-consistency-policy.md)
   (no stored translations; truth lives in the code/CLI, docs point to it). Keep
