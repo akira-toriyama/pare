@@ -160,24 +160,15 @@ func TestBlockExtent_MixedTabAndSpaceIndent(t *testing.T) {
 }
 
 func TestPare_BlockExtentIsVerbatimSubset(t *testing.T) {
+	// The seed-corpus form of FuzzPareBlockExtent's contract on a realistic
+	// go-test transcript with context on: block extent must still only select
+	// verbatim input lines.
 	in := []byte(goTest(50))
-	res := Pare(in, Options{
+	opts := Options{
 		BudgetBytes: 400, Head: 4, Tail: 4, Context: 1,
 		Matchers: testMatchers(t), Extent: ExtentBlock,
-	})
-	markerRe := regexp.MustCompile(`^\[\.\.\. \d+ lines? omitted( \(full: .*\))? \.\.\.\]$`)
-	inLines := map[string]bool{}
-	for _, ln := range strings.Split(string(in), "\n") {
-		inLines[ln] = true
 	}
-	for _, ln := range strings.Split(string(res.Output), "\n") {
-		if markerRe.MatchString(ln) {
-			continue
-		}
-		if !inLines[ln] {
-			t.Fatalf("block extent fabricated a line not in the input: %q", ln)
-		}
-	}
+	assertInvariants(t, in, opts, Pare(in, opts))
 }
 
 func TestProfiles_RegistryIsTheSingleSource(t *testing.T) {
