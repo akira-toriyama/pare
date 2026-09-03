@@ -21,24 +21,6 @@ import (
 // without swallowing ordinary prose. RE2 (Go regexp) supports \b and (?i).
 const DefaultPattern = `(?i)\b(error|fail(ed|ure)?|exception|fatal|panic|abort|denied|traceback|undefined symbol|cannot find|assert)\b`
 
-// TestPattern matches the structural failure anchors of common test runners. It
-// backs the `test` profile (paired with ExtentBlock). Unlike DefaultPattern it
-// keys off line STRUCTURE — a FAIL header, a failure mark, a file:line:col
-// diagnostic — rather than the word "error" in prose, so passing lines and
-// ordinary logs do not match. Matched against individual lines (^ is line
-// start). Covers, in order: Go `--- FAIL:` (incl. indented subtests), Go
-// package `FAIL` summary and bare `FAIL`, panics, Swift-Testing/jest/vitest fail
-// marks (✘✗●✕×), XCTest and clang/gcc `: error:` lines, pytest `FAILED` summary
-// and `E ` detail, and file:line:col build diagnostics (Go and others).
-const TestPattern = `^\s*--- FAIL:` + // Go (sub)test failure header
-	`|^FAIL\b` + //             Go package summary + bare FAIL
-	`|^panic:` + //             Go / runtime panic
-	`|^\s*[✘✗●✕×]` + //         Swift Testing / jest / vitest fail marks
-	`|: error:` + //            XCTest, clang/gcc: "file:line: error:"
-	`|^FAILED\b` + //           pytest short-summary line
-	`|^E {2,}` + //             pytest error-detail lines ("E   assert ...")
-	`|\.\w+:\d+:\d+:` //        Go build / file:line:col diagnostics
-
 // Extent selects how a matched line expands into a must-keep region before the
 // budget machinery adds Context around it.
 type Extent int
@@ -59,8 +41,9 @@ const (
 // lines (unless the caller asked for fewer) rather than collapsing to nothing.
 const floorLines = 3
 
-// Options configures a Pare call. The CLI always supplies these; the zero value
-// (BudgetBytes 0) is treated as "no budget" and returns the input unchanged.
+// Options configures a Pare call. Defaults is the starting point the CLI seeds
+// its flags from; the zero value (BudgetBytes 0) is treated as "no budget" and
+// returns the input unchanged.
 type Options struct {
 	BudgetBytes int              // total byte ceiling for the output
 	Head        int              // lines kept from the top
@@ -69,6 +52,14 @@ type Options struct {
 	Matchers    []*regexp.Regexp // error-line matchers (OR-ed); nil ⇒ head/tail only
 	Extent      Extent           // how a match expands into a must-keep region
 	TeePath     string           // when set, referenced inside omission markers
+}
+
+// Defaults are the option values pare uses when a flag is not given — the
+// single source the CLI seeds its flag defaults from, so `--help` reports the
+// real numbers. Matchers is nil here: the pattern comes from the Profile in
+// force once the caller has resolved --match.
+func Defaults() Options {
+	return Options{BudgetBytes: 8192, Head: 15, Tail: 15, Context: 2, Extent: ExtentLine}
 }
 
 // Result reports what Pare produced. Output is the truncated (or, when it

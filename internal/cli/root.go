@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/akira-toriyama/pare/internal/budget"
 	"github.com/akira-toriyama/pare/internal/version"
@@ -92,12 +93,14 @@ func newRootCmd() *cobra.Command {
 
 	// Bind flags straight to the config cobra hands runFilter, so filterConfig is
 	// the single source of truth for these fields (no parallel var block + copy).
-	root.Flags().IntVar(&cfg.budgetBytes, "budget-bytes", 8192, "byte ceiling for the output (0 disables the budget)")
-	root.Flags().IntVar(&cfg.head, "head", 15, "lines to always keep from the top")
-	root.Flags().IntVar(&cfg.tail, "tail", 15, "lines to always keep from the bottom")
-	root.Flags().IntVar(&cfg.context, "context", 2, "lines of context to keep around each matched line")
+	// Defaults and the profile table are budget's; the flags only mirror them.
+	d := budget.Defaults()
+	root.Flags().IntVar(&cfg.budgetBytes, "budget-bytes", d.BudgetBytes, "byte ceiling for the output (0 disables the budget)")
+	root.Flags().IntVar(&cfg.head, "head", d.Head, "lines to always keep from the top")
+	root.Flags().IntVar(&cfg.tail, "tail", d.Tail, "lines to always keep from the bottom")
+	root.Flags().IntVar(&cfg.context, "context", d.Context, "lines of context to keep around each matched line")
 	root.Flags().StringArrayVar(&cfg.match, "match", nil, "error-line regex (repeatable); defaults to a built-in error pattern")
-	root.Flags().StringVar(&cfg.profile, "profile", "", "extraction profile: 'test' tunes matching for test-runner failures and keeps the whole indented assertion block; empty = generic")
+	root.Flags().StringVar(&cfg.profile, "profile", "", "extraction profile: "+budget.ProfileHelp())
 	root.Flags().StringVar(&cfg.tee, "tee", "", "write the full, untruncated input to this file and reference it in markers")
 
 	root.Version = version.Get().Human()
@@ -124,21 +127,14 @@ func runFilter(cmd *cobra.Command, cfg filterConfig) error {
 
 	// A profile seeds the default matcher and the extent policy. An explicit
 	// --match still wins as the matcher; the profile's extent applies either way.
-	extent := budget.ExtentLine
-	defaultPattern := budget.DefaultPattern
-	switch cfg.profile {
-	case "":
-		// generic (head/tail + error-word matching, single-line extent)
-	case "test":
-		extent = budget.ExtentBlock
-		defaultPattern = budget.TestPattern
-	default:
-		return usageErr("unknown --profile %q (known: test)", cfg.profile)
+	prof, ok := budget.LookupProfile(cfg.profile)
+	if !ok {
+		return usageErr("unknown --profile %q (known: %s)", cfg.profile, strings.Join(budget.ProfileNames(), ", "))
 	}
 
 	patterns := cfg.match
 	if len(patterns) == 0 {
-		patterns = []string{defaultPattern}
+		patterns = []string{prof.Pattern}
 	}
 	matchers := make([]*regexp.Regexp, 0, len(patterns))
 	for _, p := range patterns {
@@ -166,7 +162,7 @@ func runFilter(cmd *cobra.Command, cfg filterConfig) error {
 		Tail:        cfg.tail,
 		Context:     cfg.context,
 		Matchers:    matchers,
-		Extent:      extent,
+		Extent:      prof.Extent,
 		TeePath:     cfg.tee,
 	})
 

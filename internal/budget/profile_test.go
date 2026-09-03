@@ -179,3 +179,27 @@ func TestPare_BlockExtentIsVerbatimSubset(t *testing.T) {
 		}
 	}
 }
+
+func TestProfiles_RegistryIsTheSingleSource(t *testing.T) {
+	// The generic profile is the unnamed one and pairs DefaultPattern with
+	// ExtentLine; `test` pairs TestPattern with ExtentBlock. The CLI derives its
+	// usage text and error list from Names/Help, so those must agree with the
+	// registry rather than with a hand-written copy.
+	generic, ok := LookupProfile("")
+	if !ok || generic.Pattern != DefaultPattern || generic.Extent != ExtentLine {
+		t.Fatalf("generic profile = %+v, ok=%v", generic, ok)
+	}
+	test, ok := LookupProfile("test")
+	if !ok || test.Pattern != TestPattern || test.Extent != ExtentBlock || test.Doc == "" {
+		t.Fatalf("test profile = %+v, ok=%v", test, ok)
+	}
+	if _, ok := LookupProfile("nope"); ok {
+		t.Fatalf("unknown profile must not resolve")
+	}
+	if got := ProfileNames(); len(got) != 1 || got[0] != "test" {
+		t.Fatalf("ProfileNames() = %v, want [test]", got)
+	}
+	if help := ProfileHelp(); !strings.HasPrefix(help, "'test' "+test.Doc) || !strings.HasSuffix(help, "; empty = generic") {
+		t.Fatalf("ProfileHelp() = %q", help)
+	}
+}
