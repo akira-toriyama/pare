@@ -2,6 +2,7 @@ package budget
 
 import (
 	"fmt"
+	"math/rand"
 	"regexp"
 	"strings"
 	"testing"
@@ -341,5 +342,100 @@ func TestDefaults_MatchDocumentedValues(t *testing.T) {
 	want := Options{BudgetBytes: 8192, Head: 15, Tail: 15, Context: 2, Extent: ExtentLine}
 	if d.BudgetBytes != want.BudgetBytes || d.Head != want.Head || d.Tail != want.Tail || d.Context != want.Context || d.Extent != want.Extent || d.Matchers != nil || d.TeePath != "" {
 		t.Fatalf("Defaults() = %+v, want %+v", d, want)
+	}
+}
+
+// randomInput builds a deterministic pseudo-random input for property tests:
+// short and empty lines, a sprinkling of error-word lines, sometimes no
+// trailing newline.
+func randomInput(r *rand.Rand, n int) []byte {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		switch r.Intn(6) {
+		case 0:
+			// empty line
+		case 1:
+			b.WriteString("error: boom ")
+			b.WriteString(strings.Repeat("x", r.Intn(30)))
+		default:
+			b.WriteString(strings.Repeat("y", r.Intn(40)))
+		}
+		if i < n-1 || r.Intn(4) != 0 {
+			b.WriteByte('\n')
+		}
+	}
+	return []byte(b.String())
+}
+
+func TestLayout_MarkerLenMatchesMarker(t *testing.T) {
+	for _, tee := range []string{"", "/tmp/full.log"} {
+		lay := newLayout(nil, false, tee)
+		for _, k := range []int{1, 2, 9, 10, 11, 99, 100, 101, 999, 1000, 12345, 1 << 30} {
+			if got, want := lay.markerLen(k), len(marker(k, tee)); got != want {
+				t.Fatalf("markerLen(%d, tee=%q) = %d, want %d", k, tee, got, want)
+			}
+		}
+	}
+}
+
+func TestLayout_SizeMatchesRender(t *testing.T) {
+	// The bisection in Pare trusts size() as len(render()); check the equality
+	// over random inputs and random plans, with and without a tee path.
+	r := rand.New(rand.NewSource(1))
+	for iter := 0; iter < 2000; iter++ {
+		lines, trailingNL := splitLines(randomInput(r, 1+r.Intn(60)))
+		n := len(lines)
+		if n == 0 {
+			continue // a lone empty line with no newline is the empty input
+		}
+		tee := ""
+		if r.Intn(2) == 0 {
+			tee = "/tmp/full.log"
+		}
+		lay := newLayout(lines, trailingNL, tee)
+		var spans []span
+		for i := r.Intn(4); i > 0; i-- {
+			s := r.Intn(n)
+			spans = append(spans, span{s, s + 1 + r.Intn(n-s)})
+		}
+		plan := mergeSpans(spans)
+		if got, want := lay.size(plan), len(lay.render(plan, n).Output); got != want {
+			t.Fatalf("size(%v) = %d, render = %d\nlines=%q", plan, got, want, lines)
+		}
+	}
+}
+
+func TestPare_DroppingLastBlockNeverGrowsOutput(t *testing.T) {
+	// The monotonicity Phase B's bisection relies on: with context 0, for every
+	// prefix of the merged error blocks, dropping the last block yields an
+	// output no larger than before — unless the plan with it reconstructed the
+	// whole input, which is over budget by definition and so never chosen.
+	r := rand.New(rand.NewSource(2))
+	re := regexp.MustCompile(`error`)
+	for iter := 0; iter < 2000; iter++ {
+		lines, trailingNL := splitLines(randomInput(r, 2+r.Intn(80)))
+		n := len(lines)
+		var idx []int
+		for i, ln := range lines {
+			if re.MatchString(ln) {
+				idx = append(idx, i)
+			}
+		}
+		tee := ""
+		if r.Intn(2) == 0 {
+			tee = "/tmp/full.log"
+		}
+		lay := newLayout(lines, trailingNL, tee)
+		base := baseSpans(r.Intn(6), r.Intn(6), n)
+		blocks := expandBlocks(coreSpans(lines, idx, ExtentLine), 0, n)
+		for k := len(blocks); k > 0; k-- {
+			with := combine(base, blocks[:k])
+			if len(with) == 1 && with[0] == (span{0, n}) {
+				continue // whole input: never fits, so its size is irrelevant
+			}
+			if a, b := lay.size(combine(base, blocks[:k-1])), lay.size(with); a > b {
+				t.Fatalf("dropping block %d grew the output %d -> %d\nbase=%v blocks=%v lines=%q", k-1, b, a, base, blocks, lines)
+			}
+		}
 	}
 }

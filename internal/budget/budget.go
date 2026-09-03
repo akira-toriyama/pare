@@ -9,10 +9,11 @@
 package budget
 
 import (
+	"bytes"
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -83,6 +84,9 @@ type span struct{ start, end int }
 // policy when over budget: reserve head/tail, add error blocks oldest-first,
 // then on overflow shrink context → drop error blocks from the back → shrink
 // head/tail down to the floor.
+//
+// Every candidate plan is measured with layout.size (prefix sums, no
+// rendering); only the plan finally chosen is rendered.
 func Pare(input []byte, opts Options) Result {
 	inputLines := countLines(input)
 	if opts.BudgetBytes <= 0 || len(input) <= opts.BudgetBytes {
@@ -91,6 +95,8 @@ func Pare(input []byte, opts Options) Result {
 
 	lines, trailingNL := splitLines(input)
 	n := len(lines)
+	lay := newLayout(lines, trailingNL, opts.TeePath)
+	fits := func(plan []span) bool { return lay.size(plan) <= opts.BudgetBytes }
 
 	var matchIdx []int
 	for i, ln := range lines {
@@ -116,62 +122,124 @@ func Pare(input []byte, opts Options) Result {
 	for {
 		base := baseSpans(h, t, n)
 
-		// Phase A: keep every error block, shrinking context from max to 0.
+		// Phase A: keep every error block, shrinking context from max to 0. Not
+		// monotone in c (narrowing a block that touched head/tail opens a gap
+		// whose marker can outweigh the lines it replaces), so this is a scan.
 		for c := maxCtx; c >= 0; c-- {
-			if out, omitted, ok := tryPlan(lines, combine(base, expandBlocks(cores, c, n)), trailingNL, opts); ok {
-				return truncated(out, n, omitted)
+			if plan := combine(base, expandBlocks(cores, c, n)); fits(plan) {
+				return lay.render(plan, n)
 			}
 		}
 
-		// Phase B: context 0, discard error blocks from the back (newest first).
-		// k == 0 tests head/tail alone.
+		// Phase B: context 0, discard error blocks from the back (newest first);
+		// k == 0 is head/tail alone. Dropping the last block never grows the
+		// output unless the plan with it was the whole input (which cannot fit),
+		// so fits is monotone in k and the largest fitting k is found by bisection.
 		blocks0 := expandBlocks(cores, 0, n)
-		for k := len(blocks0); k >= 0; k-- {
-			if out, omitted, ok := tryPlan(lines, combine(base, blocks0[:k]), trailingNL, opts); ok {
-				return truncated(out, n, omitted)
+		fitsK := func(k int) bool { return fits(combine(base, blocks0[:k])) }
+		if fitsK(0) {
+			lo, hi := 0, len(blocks0)
+			for lo < hi {
+				mid := (lo + hi + 1) / 2
+				if fitsK(mid) {
+					lo = mid
+				} else {
+					hi = mid - 1
+				}
 			}
+			return lay.render(combine(base, blocks0[:lo]), n)
 		}
 
 		// Nothing fit at this head/tail. Shrink toward the floor, or accept the
 		// floor (head/tail only, possibly over budget) once we reach it.
 		if h <= floorH && t <= floorT {
-			out, omitted := renderPlan(lines, base, trailingNL, opts.TeePath)
-			return truncated(out, n, omitted)
+			return lay.render(base, n)
 		}
-		if h-floorH >= t-floorT && h > floorH {
+		// Whichever side is further from its floor gives a line; the guard above
+		// rules out both being at the floor, so the chosen side is above it.
+		if h-floorH >= t-floorT {
 			h--
-		} else if t > floorT {
-			t--
 		} else {
-			h-- // unreachable given the guard above, but keeps progress total
+			t--
 		}
 	}
 }
 
-func tryPlan(lines []string, plan []span, trailingNL bool, opts Options) (out []byte, omitted int, ok bool) {
-	out, omitted = renderPlan(lines, plan, trailingNL, opts.TeePath)
-	return out, omitted, len(out) <= opts.BudgetBytes
+// layout is the split input plus what measuring a plan needs: the byte prefix
+// sum of the lines and the marker geometry. size and render agree byte for
+// byte — that equality is the contract the bisection in Pare rests on, and
+// TestLayout_SizeMatchesRender pins it.
+type layout struct {
+	lines      []string
+	pre        []int // pre[i] = total bytes of lines[:i]
+	trailingNL bool
+	teePath    string
+	markerBase int // len(marker(k, teePath)) minus k's digits and the plural s
 }
 
-// truncated builds a Result for a paring that went through the budget machinery.
-// n is the input's real line count (in this path it equals countLines(input),
-// so it serves as both InputLines and the base for KeptLines). Truncated is gated
-// on whether any line was actually dropped: every plan that tryPlan accepts has
-// omitted > 0 (a zero-omission plan reconstructs the whole input, whose length
-// exceeds the budget, so it fails the fit check), leaving only the floor return —
-// where head+tail already spans the input — able to carry omitted == 0. Reporting
-// Truncated: false there keeps the Result honest: byte-identical, unchanged output
-// never claims a truncation happened.
-func truncated(out []byte, n, omitted int) Result {
-	return Result{Output: out, Truncated: omitted > 0, InputLines: n, KeptLines: n - omitted, OmittedLines: omitted}
+func newLayout(lines []string, trailingNL bool, teePath string) layout {
+	pre := make([]int, len(lines)+1)
+	for i, ln := range lines {
+		pre[i+1] = pre[i] + len(ln)
+	}
+	return layout{
+		lines:      lines,
+		pre:        pre,
+		trailingNL: trailingNL,
+		teePath:    teePath,
+		markerBase: len(marker(1, teePath)) - 1,
+	}
 }
 
-// renderPlan emits the kept spans in order, inserting one omission marker for
-// each gap (including a trailing gap). It returns the bytes and the number of
-// real lines omitted.
-func renderPlan(lines []string, plan []span, trailingNL bool, teePath string) (out []byte, omitted int) {
-	n := len(lines)
+// markerLen is len(marker(k, l.teePath)) without formatting it.
+func (l layout) markerLen(k int) int {
+	size := l.markerBase + digits(k)
+	if k != 1 {
+		size++ // "lines"
+	}
+	return size
+}
+
+// size is len(render(plan).Output): kept bytes + one marker per gap, joined by
+// single newlines, plus the trailing newline when the input had one.
+func (l layout) size(plan []span) int {
+	n := len(l.lines)
+	total, items, prev := 0, 0, 0
+	for _, sp := range plan {
+		if sp.start > prev {
+			total += l.markerLen(sp.start - prev)
+			items++
+		}
+		total += l.pre[sp.end] - l.pre[sp.start]
+		items += sp.end - sp.start
+		prev = sp.end
+	}
+	if prev < n {
+		total += l.markerLen(n - prev)
+		items++
+	}
+	if items > 0 {
+		total += items - 1
+	}
+	if l.trailingNL {
+		total++
+	}
+	return total
+}
+
+// render emits the kept spans in order, inserting one omission marker for each
+// gap (including a trailing gap), and wraps the bytes in a Result. n is the
+// input's real line count (here equal to len(l.lines), so it serves as both
+// InputLines and the base for KeptLines). Truncated is gated on whether any
+// line was actually dropped: every plan Pare accepts by size has omitted > 0 (a
+// zero-omission plan reconstructs the whole input, whose length exceeds the
+// budget), leaving only the floor return — where head+tail already spans the
+// input — able to carry omitted == 0. Reporting Truncated: false there keeps
+// the Result honest: byte-identical, unchanged output never claims a
+// truncation happened.
+func (l layout) render(plan []span, n int) Result {
 	var b strings.Builder
+	b.Grow(l.size(plan))
 	first := true
 	write := func(s string) {
 		if !first {
@@ -181,29 +249,27 @@ func renderPlan(lines []string, plan []span, trailingNL bool, teePath string) (o
 		first = false
 	}
 
-	prev := 0
+	omitted, prev := 0, 0
 	for _, sp := range plan {
 		if sp.start > prev {
 			k := sp.start - prev
 			omitted += k
-			write(marker(k, teePath))
+			write(marker(k, l.teePath))
 		}
 		for i := sp.start; i < sp.end; i++ {
-			write(lines[i])
+			write(l.lines[i])
 		}
 		prev = sp.end
 	}
 	if prev < n {
 		k := n - prev
 		omitted += k
-		write(marker(k, teePath))
+		write(marker(k, l.teePath))
 	}
-
-	s := b.String()
-	if trailingNL {
-		s += "\n"
+	if l.trailingNL {
+		b.WriteByte('\n')
 	}
-	return []byte(s), omitted
+	return Result{Output: []byte(b.String()), Truncated: omitted > 0, InputLines: n, KeptLines: n - omitted, OmittedLines: omitted}
 }
 
 // marker is the single omission-marker line. When a tee path is set it points
@@ -217,6 +283,16 @@ func marker(k int, teePath string) string {
 		return fmt.Sprintf("[... %d %s omitted (full: %s) ...]", k, unit, teePath)
 	}
 	return fmt.Sprintf("[... %d %s omitted ...]", k, unit)
+}
+
+// digits is the decimal width of k >= 0.
+func digits(k int) int {
+	d := 1
+	for k >= 10 {
+		k /= 10
+		d++
+	}
+	return d
 }
 
 // baseSpans is the always-kept head/tail region for a given head/tail count.
@@ -313,7 +389,7 @@ func mergeSpans(spans []span) []span {
 		return nil
 	}
 	s := slices.Clone(spans)
-	sort.Slice(s, func(i, j int) bool { return s[i].start < s[j].start })
+	slices.SortFunc(s, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	out := []span{s[0]}
 	for _, sp := range s[1:] {
 		last := &out[len(out)-1]
@@ -344,14 +420,13 @@ func splitLines(input []byte) (lines []string, trailingNL bool) {
 }
 
 // countLines counts real lines (a trailing newline does not add one), matching
-// len(splitLines(input)) without allocating the slice.
+// len(splitLines(input)) without allocating the slice or copying the input.
 func countLines(input []byte) int {
 	if len(input) == 0 {
 		return 0
 	}
-	s := string(input)
-	c := strings.Count(s, "\n")
-	if !strings.HasSuffix(s, "\n") {
+	c := bytes.Count(input, []byte{'\n'})
+	if input[len(input)-1] != '\n' {
 		c++
 	}
 	return c
