@@ -49,7 +49,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = [ pkgs.go pkgs.golangci-lint pkgs.goreleaser pkgs.git-cliff ];
+          packages = [ pkgs.go pkgs.golangci-lint pkgs.goreleaser ];
         };
       });
 }
