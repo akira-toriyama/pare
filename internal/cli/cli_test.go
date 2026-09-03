@@ -83,16 +83,6 @@ func TestFilter_TeeWritesFullInputAndMarkerReferencesIt(t *testing.T) {
 	}
 }
 
-func TestFilter_InvalidRegexIsUsageError(t *testing.T) {
-	_, err := run([]string{"--match", "("}, "whatever\n")
-	assertExitCode(t, err, codeUsage)
-}
-
-func TestFilter_NegativeBudgetIsUsageError(t *testing.T) {
-	_, err := run([]string{"--budget-bytes", "-1"}, "whatever\n")
-	assertExitCode(t, err, codeUsage)
-}
-
 func TestFilter_TeeWriteFailureIsInternalError(t *testing.T) {
 	// A --tee path whose parent directory does not exist makes os.WriteFile fail
 	// deterministically, exercising internalErr and the exit-3 (internal/IO) half
@@ -251,12 +241,58 @@ func TestFilter_ProfileTestKeepsSwiftXCTestFailure(t *testing.T) {
 	}
 }
 
-func TestFilter_UnknownProfileIsUsageError(t *testing.T) {
-	_, err := run([]string{"--profile", "nope"}, "whatever\n")
-	assertExitCode(t, err, codeUsage)
-	// The known list is derived from budget's registry, not typed here.
-	if want := "(known: " + strings.Join(budget.ProfileNames(), ", ") + ")"; !strings.Contains(err.Error(), want) {
-		t.Fatalf("error %q should list the registered profiles %q", err, want)
+func TestResolveOptions(t *testing.T) {
+	// Validation and profile/matcher resolution are pure, so one table covers
+	// every usage error and the documented --profile / --match interaction
+	// without touching cobra or a stdin. Exit-code routing of these errors is
+	// pinned separately by TestExecute_ContractAndExitMapping.
+	defaults := filterConfig{budgetBytes: 8192, head: 15, tail: 15, context: 2}
+	with := func(mut func(c *filterConfig)) filterConfig { c := defaults; mut(&c); return c }
+	cases := []struct {
+		name     string
+		cfg      filterConfig
+		wantErr  string // substring of the usage error; "" means success
+		wantPats []string
+		wantExt  budget.Extent
+	}{
+		{name: "generic defaults", cfg: defaults, wantPats: []string{budget.DefaultPattern}, wantExt: budget.ExtentLine},
+		{name: "profile test", cfg: with(func(c *filterConfig) { c.profile = "test" }), wantPats: []string{budget.TestPattern}, wantExt: budget.ExtentBlock},
+		{name: "profile test keeps block extent under explicit match", cfg: with(func(c *filterConfig) { c.profile = "test"; c.match = []string{"MYTOKEN"} }), wantPats: []string{"MYTOKEN"}, wantExt: budget.ExtentBlock},
+		{name: "several matches are all compiled", cfg: with(func(c *filterConfig) { c.match = []string{"ALPHA", "OMEGA"} }), wantPats: []string{"ALPHA", "OMEGA"}, wantExt: budget.ExtentLine},
+		{name: "negative budget", cfg: with(func(c *filterConfig) { c.budgetBytes = -1 }), wantErr: "must be >= 0"},
+		{name: "negative head", cfg: with(func(c *filterConfig) { c.head = -1 }), wantErr: "must be >= 0"},
+		{name: "negative tail", cfg: with(func(c *filterConfig) { c.tail = -1 }), wantErr: "must be >= 0"},
+		{name: "negative context", cfg: with(func(c *filterConfig) { c.context = -1 }), wantErr: "must be >= 0"},
+		{name: "invalid regex", cfg: with(func(c *filterConfig) { c.match = []string{"("} }), wantErr: `invalid --match regex "("`},
+		{name: "unknown profile lists the registry", cfg: with(func(c *filterConfig) { c.profile = "nope" }), wantErr: `unknown --profile "nope" (known: ` + strings.Join(budget.ProfileNames(), ", ") + ")"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := resolveOptions(tc.cfg)
+			if tc.wantErr != "" {
+				assertExitCode(t, err, codeUsage)
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error %q does not contain %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if opts.BudgetBytes != tc.cfg.budgetBytes || opts.Head != tc.cfg.head || opts.Tail != tc.cfg.tail || opts.Context != tc.cfg.context || opts.TeePath != tc.cfg.tee {
+				t.Fatalf("numeric/tee fields not carried over: %+v from %+v", opts, tc.cfg)
+			}
+			if opts.Extent != tc.wantExt {
+				t.Fatalf("extent = %v, want %v", opts.Extent, tc.wantExt)
+			}
+			var got []string
+			for _, re := range opts.Matchers {
+				got = append(got, re.String())
+			}
+			if strings.Join(got, "\x00") != strings.Join(tc.wantPats, "\x00") {
+				t.Fatalf("matchers = %q, want %q", got, tc.wantPats)
+			}
+		})
 	}
 }
 

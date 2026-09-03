@@ -120,16 +120,19 @@ type filterConfig struct {
 	tee         string
 }
 
-func runFilter(cmd *cobra.Command, cfg filterConfig) error {
+// resolveOptions turns the parsed flags into budget.Options. It is pure — no
+// cobra, no I/O — so validation is table-testable without a stdin; every
+// failure is a usageErr (exit 2).
+func resolveOptions(cfg filterConfig) (budget.Options, error) {
 	if cfg.budgetBytes < 0 || cfg.head < 0 || cfg.tail < 0 || cfg.context < 0 {
-		return usageErr("--budget-bytes, --head, --tail and --context must be >= 0")
+		return budget.Options{}, usageErr("--budget-bytes, --head, --tail and --context must be >= 0")
 	}
 
 	// A profile seeds the default matcher and the extent policy. An explicit
 	// --match still wins as the matcher; the profile's extent applies either way.
 	prof, ok := budget.LookupProfile(cfg.profile)
 	if !ok {
-		return usageErr("unknown --profile %q (known: %s)", cfg.profile, strings.Join(budget.ProfileNames(), ", "))
+		return budget.Options{}, usageErr("unknown --profile %q (known: %s)", cfg.profile, strings.Join(budget.ProfileNames(), ", "))
 	}
 
 	patterns := cfg.match
@@ -140,23 +143,12 @@ func runFilter(cmd *cobra.Command, cfg filterConfig) error {
 	for _, p := range patterns {
 		re, err := regexp.Compile(p)
 		if err != nil {
-			return usageErr("invalid --match regex %q: %v", p, err)
+			return budget.Options{}, usageErr("invalid --match regex %q: %v", p, err)
 		}
 		matchers = append(matchers, re)
 	}
 
-	input, err := io.ReadAll(cmd.InOrStdin())
-	if err != nil {
-		return internalErr("reading stdin: %v", err)
-	}
-
-	if cfg.tee != "" {
-		if err := os.WriteFile(cfg.tee, input, 0o644); err != nil {
-			return internalErr("writing --tee file %q: %v", cfg.tee, err)
-		}
-	}
-
-	res := budget.Pare(input, budget.Options{
+	return budget.Options{
 		BudgetBytes: cfg.budgetBytes,
 		Head:        cfg.head,
 		Tail:        cfg.tail,
@@ -164,8 +156,30 @@ func runFilter(cmd *cobra.Command, cfg filterConfig) error {
 		Matchers:    matchers,
 		Extent:      prof.Extent,
 		TeePath:     cfg.tee,
-	})
+	}, nil
+}
 
+// runFilter is the I/O half: resolve → read stdin → tee → Pare → write stdout.
+// Options are resolved before any read so a bad flag fails without consuming
+// the pipe.
+func runFilter(cmd *cobra.Command, cfg filterConfig) error {
+	opts, err := resolveOptions(cfg)
+	if err != nil {
+		return err
+	}
+
+	input, err := io.ReadAll(cmd.InOrStdin())
+	if err != nil {
+		return internalErr("reading stdin: %v", err)
+	}
+
+	if opts.TeePath != "" {
+		if err := os.WriteFile(opts.TeePath, input, 0o644); err != nil {
+			return internalErr("writing --tee file %q: %v", opts.TeePath, err)
+		}
+	}
+
+	res := budget.Pare(input, opts)
 	if _, err := cmd.OutOrStdout().Write(res.Output); err != nil {
 		return internalErr("writing stdout: %v", err)
 	}
