@@ -21,7 +21,7 @@ echo "→ go test -race (+ coverage)"
 go test -race -covermode=atomic -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out | tail -1
 
-echo "→ docs guard (README version-agnostic + EN/JA cross-link)"
+echo "→ docs guard (README version-agnostic)"
 sh scripts/check-docs.sh
 
 if command -v golangci-lint >/dev/null 2>&1; then
@@ -48,7 +48,5 @@ if command -v govulncheck >/dev/null 2>&1; then
 fi
 
 echo "→ smoke: version / passthrough / buried-error survives a small budget"
-"$BIN" version
-printf 'a\nb\nc\n' | "$BIN" | grep -qx b
-{ seq 1 200; echo "ERROR: boom"; seq 201 400; } | "$BIN" --budget-bytes 300 --head 3 --tail 3 | grep -q 'ERROR: boom'
+sh scripts/smoke.sh "$BIN"
 echo "✓ all checks passed"
