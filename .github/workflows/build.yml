@@ -62,7 +62,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # README hygiene guard: version-agnostic + EN/JA cross-link (F11).
+      # README hygiene guard: version-agnostic (F11).
       - name: docs guard
         if: runner.os == 'Linux'
         run: sh scripts/check-docs.sh
@@ -73,13 +73,8 @@ jobs:
         if: runner.os == 'Linux'
         run: go test -run '^$' -fuzz '^FuzzPare$' -fuzztime 30s ./internal/budget/
 
+      # The checks themselves live in scripts/smoke.sh, shared with check.sh.
       - name: smoke test
-        shell: bash
         run: |
           go build -o /tmp/pare ./cmd/pare
-          /tmp/pare version
-          # small output passes through untouched
-          printf 'a\nb\nc\n' | /tmp/pare | grep -qx b
-          # a buried error survives a small budget that a blind tail would drop
-          { seq 1 200; echo "ERROR: boom"; seq 201 400; } \
-            | /tmp/pare --budget-bytes 300 --head 3 --tail 3 | grep -q 'ERROR: boom'
+          sh scripts/smoke.sh /tmp/pare
