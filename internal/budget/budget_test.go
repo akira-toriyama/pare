@@ -333,3 +333,13 @@ func TestPare_OrsAcrossMultipleMatchers(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaults_MatchDocumentedValues(t *testing.T) {
+	// README's flag table and docs/algorithm.md quote these numbers; the CLI
+	// seeds its flag defaults from here, so this is the one place they live.
+	d := Defaults()
+	want := Options{BudgetBytes: 8192, Head: 15, Tail: 15, Context: 2, Extent: ExtentLine}
+	if d.BudgetBytes != want.BudgetBytes || d.Head != want.Head || d.Tail != want.Tail || d.Context != want.Context || d.Extent != want.Extent || d.Matchers != nil || d.TeePath != "" {
+		t.Fatalf("Defaults() = %+v, want %+v", d, want)
+	}
+}

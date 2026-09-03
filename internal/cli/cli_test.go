@@ -8,8 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/akira-toriyama/pare/internal/budget"
 )
 
 // run builds a fresh root command (flag state is local, so tests don't share
@@ -251,6 +254,34 @@ func TestFilter_ProfileTestKeepsSwiftXCTestFailure(t *testing.T) {
 func TestFilter_UnknownProfileIsUsageError(t *testing.T) {
 	_, err := run([]string{"--profile", "nope"}, "whatever\n")
 	assertExitCode(t, err, codeUsage)
+	// The known list is derived from budget's registry, not typed here.
+	if want := "(known: " + strings.Join(budget.ProfileNames(), ", ") + ")"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error %q should list the registered profiles %q", err, want)
+	}
+}
+
+func TestHelp_ReportsBudgetDefaultsAndProfiles(t *testing.T) {
+	// --help is the user-facing statement of the defaults; it must be seeded
+	// from budget.Defaults() and budget.ProfileHelp(), never from literals that
+	// can drift from the core.
+	out, err := run([]string{"--help"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	d := budget.Defaults()
+	for _, want := range []string{
+		fmt.Sprintf("--budget-bytes int .*(default %d)", d.BudgetBytes),
+		fmt.Sprintf("--head int .*(default %d)", d.Head),
+		fmt.Sprintf("--tail int .*(default %d)", d.Tail),
+		fmt.Sprintf("--context int .*(default %d)", d.Context),
+		"--profile string .*extraction profile: " + budget.ProfileHelp(),
+	} {
+		// cobra pads flag columns; `.*` in want survives QuoteMeta as a wildcard.
+		re := regexp.MustCompile(strings.ReplaceAll(regexp.QuoteMeta(want), `\.\*`, `.*`))
+		if !re.MatchString(out) {
+			t.Fatalf("--help missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func TestFilter_ProfileTestBlockExtentAppliesToCustomMatch(t *testing.T) {
