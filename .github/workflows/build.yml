@@ -68,10 +68,14 @@ jobs:
         run: sh scripts/check-docs.sh
 
       # Short fuzz of the pure core — a cheap regression net for the budget
-      # algorithm's invariants (identity-when-fits, line-subset).
-      - name: fuzz budget core (30s)
+      # algorithm's invariants (identity-when-fits, line-subset) on both the
+      # generic and the `test`-profile path. One invocation per target:
+      # `go test -fuzz` refuses a pattern that matches more than one fuzz test.
+      - name: fuzz budget core (30s per target)
         if: runner.os == 'Linux'
-        run: go test -run '^$' -fuzz '^FuzzPare$' -fuzztime 30s ./internal/budget/
+        run: |
+          go test -run '^$' -fuzz '^FuzzPare$' -fuzztime 30s ./internal/budget/
+          go test -run '^$' -fuzz '^FuzzPareBlockExtent$' -fuzztime 30s ./internal/budget/
 
       # The checks themselves live in scripts/smoke.sh, shared with check.sh.
       - name: smoke test
