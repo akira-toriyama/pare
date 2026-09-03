@@ -44,16 +44,28 @@ func internalErr(format string, a ...any) error {
 	return &exitError{code: codeInternal, err: fmt.Errorf(format, a...)}
 }
 
-// Execute builds the root command, runs it, and maps the outcome to pare's
-// exit-code contract. Errors are printed to stderr (never stdout), so a
-// downstream `| jq` or `| grep` on stdout is never polluted by diagnostics.
+// Execute runs pare on the process streams and returns its exit code — the
+// one call main makes. The body is execute, which takes the streams as
+// parameters so the exit-code mapping is testable without swapping os.*.
 func Execute() int {
+	return execute(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+}
+
+// execute builds the root command on the given streams, runs it, and maps the
+// outcome to pare's exit-code contract. Errors are printed to stderr (never
+// stdout), so a downstream `| jq` or `| grep` on stdout is never polluted by
+// diagnostics.
+func execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root := newRootCmd()
+	root.SetArgs(args)
+	root.SetIn(stdin)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
 	err := root.Execute()
 	if err == nil {
 		return codeOK
 	}
-	fmt.Fprintln(os.Stderr, "pare: "+err.Error())
+	fmt.Fprintln(stderr, "pare: "+err.Error())
 	var ee *exitError
 	if errors.As(err, &ee) {
 		return ee.code
