@@ -1,4 +1,5 @@
-<!-- Commit + PR title follow gitmoji + Conventional Commits:
+<!-- Commit + PR title follow the fleet commit convention (glyph.toml is the
+     grammar; `glyph lint --pr N` checks the title):
      https://github.com/akira-toriyama/.github/blob/main/CONTRIBUTING.md -->
 
 ## What & why

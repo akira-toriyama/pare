@@ -144,10 +144,12 @@ head/tail toward a floor. The full policy is in
 
 ```sh
 sh scripts/check.sh        # build / vet / test -race / lint / smoke
-git config core.hooksPath scripts/hooks   # enable the commit-msg convention hook
+git config core.hooksPath scripts/hooks   # commit-msg hook: runs `glyph lint --stdin`
+glyph lint --range origin/main..HEAD       # before pushing: the check CI runs
 ```
 
-Commits follow [gitmoji + Conventional Commits](https://github.com/akira-toriyama/.github/blob/main/CONTRIBUTING.md).
+Commits follow the fleet [commit convention](https://github.com/akira-toriyama/.github/blob/main/CONTRIBUTING.md);
+this repository's `glyph.toml` is its machine-readable form.
 
 ## License
 
